@@ -1,9 +1,9 @@
 # GaussDB / OpenGauss 改写正例库
 
-> 判断层按需加载。这是「等价保持、GaussDB 上真有效」的改写**候选菜单**——给 LLM 提供高质量改写候选，喂进 `gdaa verify`。
+> 判断层按需加载。这是「等价保持、GaussDB 上真有效」的改写**候选菜单**——给 LLM 提供高质量改写候选，喂进 `verify.py`。
 > 负向边界（什么看着像问题其实不能瞎改）见 `gaussdb-cbo-and-diagnosis.md` §5。
 > 纪律：
-> - 每条都是**候选**，必须过 `gdaa verify`（cost ≥ 1.3× 且 md5 结果集等价）才能呈现为已验证。
+> - 每条都是**候选**，必须过 `verify.py`（cost ≥ 1.3× 且 md5 结果集等价）才能呈现为已验证。
 > - 游标 SELECT 改写须**保持输出列名与列序**（循环体用 `rec.col`）。
 > - 标 ⚠️ 的有 NULL / 语义等价坑，未确认前**不得声称等价**，让 verify 的等价门判定。
 
@@ -107,7 +107,7 @@
 
 ## 配合验证
 
-- 索引类改写（3、11、12）→ 用 `gdaa verify --auto-index --index '...'` 把解锁的索引一起验。
-- 纯改写（1、2、4–10、14）→ `gdaa verify --original '<替换后>' --rewrite '<改写>'`，看 ACCEPTED + 等价。
+- 索引类改写（3、11、12）→ 用 `verify.py --auto-index --index '...'` 把解锁的索引一起验。
+- 纯改写（1、2、4–10、14）→ `verify.py --original '<替换后>' --rewrite '<改写>'`，看 ACCEPTED + 等价。
 - 结构/DDL 类（13 分布列、12 的分区设计）→ 不自动改，归「建议（未验证）」。
 - 标 ⚠️ 的 NULL/重复/版本语义，必须由 verify 的等价门确认，不得在报告里直接断言等价。

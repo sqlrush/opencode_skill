@@ -9,13 +9,13 @@ OpenGauss 有两种兼容模式，存储过程语言随之不同：
 - **PL/pgSQL**：PostgreSQL 原生过程语言。游标声明常见 `DECLARE c CURSOR FOR SELECT ...`、`FOR rec IN (SELECT ...) LOOP`、`OPEN c FOR SELECT ...`。
 - **PL/SQL（A 兼容，Oracle 模式）**：`CURSOR c IS SELECT ...`、包（package）内过程与游标、`%ROWTYPE`、`FORALL`、`BULK COLLECT`、参数化游标 `CURSOR c(p int) IS ...`、REF CURSOR。
 
-`gdaa proc collect` 的 `## Procedure Source` 标出 `lang`。v1 的 `ExtractCursors` 覆盖两种模式的**基础游标**（`CURSOR c IS SELECT` / `FOR rec IN (SELECT)` / `OPEN c FOR SELECT` / `DECLARE c CURSOR FOR SELECT`）；参数化游标、包内游标、REF CURSOR 归 `## Skipped Cursors`（v2 再支持）。
+`proctune.py collect` 的 `## Procedure Source` 标出 `lang`。v1 的 `ExtractCursors` 覆盖两种模式的**基础游标**（`CURSOR c IS SELECT` / `FOR rec IN (SELECT)` / `OPEN c FOR SELECT` / `DECLARE c CURSOR FOR SELECT`）；参数化游标、包内游标、REF CURSOR 归 `## Skipped Cursors`（v2 再支持）。
 
 ## 二、嵌套语句统计：track_stmt_stat_level
 
 过程体内执行的 SQL 是「嵌套语句」。`dbe_perf.statement` 默认主要记录顶层语句；要把过程内部每条 SQL 的 calls/avg/total 也采下来，需要把 `track_stmt_stat_level` 调到捕获嵌套层级（形如 `'OFF,L1'` 之类，第二段控制完整 SQL 记录级别，具体取值见实例文档）。
 
-`## Runtime Attribution` 就是按 embedded SQL 的 unique_sql_id 关联这些统计。**未开启时，gdaa 优雅降级为纯静态分析并在该节标注**——此时「哪条最耗时」只能靠结构推断，建议提示 DBA 开启后复采以获得真实耗时排序。
+`## Runtime Attribution` 就是按 embedded SQL 的 unique_sql_id 关联这些统计。**未开启时，proctune 优雅降级为纯静态分析并在该节标注**——此时「哪条最耗时」只能靠结构推断，建议提示 DBA 开启后复采以获得真实耗时排序。
 
 ## 三、子事务 / savepoint 成本（EXCEPTION 块）
 

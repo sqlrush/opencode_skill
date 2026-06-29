@@ -38,19 +38,13 @@ python3 -m pip install -r requirements.txt
 - `~/.gdaa/credentials/<name>.enc` —— AES-256-GCM 加密的口令
 - `~/.gdaa/key` —— 32 字节本机密钥
 
-**情况 A：已有 gdaa 连接** —— 直接复用，跳到第 2 步。查看现有连接：
+**情况 A：已有 `~/.gdaa` 连接** —— 直接复用，跳到第 2 步。查看现有连接：
 
 ```bash
 cat ~/.gdaa/config.yaml      # 看 name 列表（不含密码）
 ```
 
-**情况 B：装了 gdaa 二进制** —— 用它加连接（最省事）：
-
-```bash
-gdaa connect add og-prod --type opengauss --host <HOST> --port 5432 -U <USER> -d <DB>
-```
-
-**情况 C：没有 gdaa，纯手工建** —— 写 `config.yaml` + 用本仓库的 `common` 加密口令：
+**情况 B：手工新建** —— 写 `config.yaml` + 用本仓库的 `common` 加密口令：
 
 ```bash
 mkdir -p ~/.gdaa && chmod 700 ~/.gdaa

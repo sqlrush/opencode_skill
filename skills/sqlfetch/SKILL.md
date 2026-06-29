@@ -21,7 +21,7 @@ metadata:
    ```
 
 4. 若输出提示存在占位符（Normalized），说明这是归一化 SQL，向用户索要真实值并展示替换后的 SQL。
-5. **若输出带 🛑「SQL 被 openGauss 截断」**：说明这条 SQL 太长、超过 `track_activity_query_size`，库里留存的就是半截文本（`gdaa` 同样取不全）。**不要**拿它去 explain/调优——向用户索要完整 SQL，后续 explain/sqltune 都用 `--sql-stdin` 传完整文本。
+5. **若输出带 🛑「SQL 被 openGauss 截断」**：说明这条 SQL 太长、超过 `track_activity_query_size`，库里留存的就是半截文本（数据库侧 `track_activity_query_size` 的留存限制）。**不要**拿它去 explain/调优——向用户索要完整 SQL，后续 explain/sqltune 都用 `--sql-stdin` 传完整文本。
 6. 下一步建议：走 explain 工作流快速看计划，或走 sqltune 工作流做深度调优。
 
 ## 安全红线

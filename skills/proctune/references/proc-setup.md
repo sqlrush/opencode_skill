@@ -1,37 +1,38 @@
 # proctune / procinfo 安装与排错
 
-## 一、安装 gdaa
+## 一、前置条件
 
-`proctune` / `procinfo` 依赖 `gdaa` 二进制在 PATH 上。
+`proctune` 由本仓库的 Python 脚本运行，**不依赖 gdaa 二进制**。
 
-- 预检 `gdaa --version` 失败说明 PATH 上没有 gdaa。
-- 安装：从源码 `make install`（装到 `~/.local/bin/gdaa`），或下载 release 二进制放进任意 PATH 目录（如 `/usr/local/bin`）。
-- 放哪个目录不限，只要**运行宿主（OpenClaw 等）的进程能在 PATH 上解析到 `gdaa`**。
+- Python ≥ 3.9，并装好依赖：`python3 -m pip install -r requirements.txt`（`pg8000` / `cryptography` / `PyYAML`）。
+- 预检入口脚本 `proctune.py -h`（实际路径见 `docs/INSTALL-opencode.md` 或安装目录）。报缺依赖时按上面装齐。
+- 安装到 OpenCode：见 `docs/INSTALL-opencode.md`。
 
 ## 二、配置连接
 
-```bash
-gdaa connect add <name> --type opengauss|gaussdb --host <h> --port <p> -U <user> -d <db>
-gdaa connect test <name>
-gdaa connect list
-```
+连接信息复用 `~/.gdaa`（与 SQL 优化族共用的连接+凭据存储），通过 `-c <name>` 选连接。新建 / 查看连接见 `docs/INSTALL-opencode.md` 第 1 步：
 
-密码以 AES-256-GCM 加密存于 `~/.gdaa/credentials/<name>.enc`；非交互场景用环境变量 `GDAA_PASSWORD`。`proctune` 全程只用 `-c <name>`，不构造含密码的连接串。
+- 已有连接：`cat ~/.gdaa/config.yaml` 看 name 列表（不含密码）。
+- 手工新建：写 `~/.gdaa/config.yaml` + 用本仓库 `common` 的 `save_secret` 加密口令（落 `~/.gdaa/credentials/<name>.enc`）。
+- 非交互 / CI 场景用环境变量 `GDAA_PASSWORD` 覆盖存储口令；`GDAA_HOME` 覆盖根目录。
+
+口令以 AES-256-GCM 加密存储；`proctune` 全程只用 `-c <name>`，不构造含密码的连接串。验证连接可用：跑一次 `proctune.py collect -c <name> <schema.proc>`，能取到 `## Procedure Source` 即连通。
 
 ## 三、开启运行时归因（可选但推荐）
 
 `## Runtime Attribution` 需要实例采集**嵌套语句**统计。未开启时 `proctune` 自动降级为纯静态分析（命令不失败），但拿不到「哪条 embedded SQL 真正耗时」的真实排序。
 
-- 把 `track_stmt_stat_level` 调到捕获嵌套层级（具体取值见实例文档），重采 `gdaa proc collect` 即可获得真实 calls/avg/total。
+- 把 `track_stmt_stat_level` 调到捕获嵌套层级（具体取值见实例文档），重采 `proctune.py collect` 即可获得真实 calls/avg/total。
 - 这是只读统计，不改业务行为。
 
 ## 四、症状对照表
 
 | 症状 | 可能原因 | 处理 |
 |---|---|---|
-| `gdaa --version` 失败 | gdaa 不在 PATH | 见「一、安装 gdaa」 |
-| `unknown connection` | 连接名未配置 | `gdaa connect add ...` 后 `gdaa connect list` 核对 |
-| 连接失败（退出码 2） | host/port/凭据错或库不可达 | `gdaa connect test <name>` 排查；确认网络与账号 |
+| `ModuleNotFoundError: No module named 'pg8000'` | 缺 Python 依赖 | `python3 -m pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'common'` | 没用安装脚本（漏拷 `common/`） | 重跑 `install-opencode.sh` |
+| `no connection named 'xxx'` | 连接名未配置 | 见「二、配置连接」，核对 `~/.gdaa/config.yaml` |
+| 连接失败（退出码 2） | host/port/凭据错或库不可达 | 跑一次 `proctune.py collect` 验证；确认网络与账号；或用 `GDAA_PASSWORD` |
 | 权限不足（退出码 3） | 账号缺 `pg_get_functiondef` / `dbe_perf` / `gs_index_advise` / hypopg 权限 | 用有相应读取/调优权限的账号 |
 | `## Runtime Attribution` 为空或标「不可用」 | 未开 `track_stmt_stat_level` 捕获嵌套语句 | 见「三、开启运行时归因」；不开则按纯静态分析进行 |
 | `## Verified Index Candidates` 显示无候选 | gs_index_advise 未发现，或合成值下无收益 | 用 `--bind <var=value>` 传真实值重验；或仅作未验证思路呈现 |
@@ -41,4 +42,4 @@ gdaa connect list
 
 ## 五、与 sqltune 的关系
 
-`proctune` 对游标 SELECT 的优化复用 sqltune 同一套机器（`Collect` / `VerifyIndexes` / `gdaa verify`）。若单独一条 SQL 的调优诉求，直接用 `/sqltune` 更直接；`proctune` 面向「过程内的游标 + 过程结构」整体分析。
+`proctune` 对游标 SELECT 的优化复用 sqltune 同一套机器（`Collect` / `VerifyIndexes` / `verify.py`）。若单独一条 SQL 的调优诉求，直接用 `/sqltune` 更直接；`proctune` 面向「过程内的游标 + 过程结构」整体分析。
