@@ -1,7 +1,8 @@
 # 在 OpenCode 上装载这些 skill —— 操作手册
 
-本手册说明如何把 `opencode_skill` 的 6 个技能（slowsql / topsql / sqlfetch /
-explain / sqltune / proctune）装到 [OpenCode](https://opencode.ai) 并跑通。
+本手册说明如何把 `opencode_skill` 的 10 个技能（slowsql / topsql / sqlfetch /
+explain / sqltune / proctune / procinfo / topproc / health / wdr）装到
+[OpenCode](https://opencode.ai) 并跑通。
 
 OpenCode 原生支持 Agent Skills：它会从下列目录发现 `SKILL.md`——
 

@@ -38,6 +38,8 @@ same store the Go `gdaa` tool uses), or override the base dir with `GDAA_HOME`.
 
 ## Scope (current)
 
+Full parity with the Go `gdaa` skill set — 10 skills across 3 families.
+
 SQL-optimization family:
 
 - `skills/slowsql`  — find slow SQL by avg-time threshold
@@ -49,11 +51,20 @@ SQL-optimization family:
 Stored-procedure family:
 
 - `skills/proctune` — stored-procedure analysis + cursor SELECT tuning
+- `skills/procinfo` — read-only stored-procedure structural diagnostic (hand off to proctune)
+- `skills/topproc`  — rank the most resource-consuming procedures (pg_stat_user_functions)
 
-Each skill's output is cross-validated byte-identical against the Go `gdaa`
-binary (slowsql/topsql/sqlfetch differ only in the trailing "Next:" hint, which
-points at the local Python scripts instead of `gdaa`).
+Diagnostics family:
+
+- `skills/health`   — 12-dimension read-only health check + deterministic findings
+- `skills/wdr`      — WDR snapshot-delta interpretation (7 dims, snaps/collect/render)
+
+Each skill's output is cross-validated against the Go `gdaa` binary. health and
+wdr were diffed byte-for-byte: same dimensions, headers, threshold strings, and
+findings (wdr's immutable-snapshot evidence is numerically identical, and `wdr
+render` matches except an intentional drop of the "gdaa" word in the footer).
+slowsql/topsql/sqlfetch differ only in the trailing "Next:" hint, which points
+at the local Python scripts instead of `gdaa`.
 
 Driver: `pg8000` (pure Python; verified against openGauss-lite 5.0.3 for both
 `opengauss` and `gaussdb` connection types).
-"""
