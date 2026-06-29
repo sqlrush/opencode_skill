@@ -565,6 +565,29 @@ def substitute_vars(sel: str, vars_: dict, binds: dict) -> VarSubResult:
     return VarSubResult(sql="".join(out), subs=subs)
 
 
+def references_record_var(sql: str, record_vars: list) -> str:
+    """Return the first record/composite variable a SELECT references as
+    `recvar.field`, or "" if none. Such a cursor depends on the enclosing loop's
+    record and cannot be EXPLAINed standalone, so callers skip it cleanly.
+    """
+    low = sql.lower()
+    for rv in record_vars:
+        rv = rv.lower()
+        i = low.find(rv + ".")
+        while i != -1:
+            before = low[i - 1] if i > 0 else " "
+            if not (before.isalnum() or before in "_$"):
+                return rv
+            i = low.find(rv + ".", i + 1)
+    return ""
+
+
+def record_var_names(vars_: dict) -> list:
+    """Names of declared record/%rowtype variables from a ProcDef.vars map."""
+    return [n for n, t in vars_.items()
+            if t and (t.strip().lower() == "record" or "rowtype" in t.lower())]
+
+
 def analyze(schema: str, name: str, lang: str, body: str, args_text: str) -> ProcDef:
     args = parse_args(args_text)
     return ProcDef(

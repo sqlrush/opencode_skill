@@ -123,6 +123,21 @@ def test_rollback_safe():
     assert not pa.detect_rollback_safe("BEGIN COMMIT; END;")
 
 
+def test_record_var_names_and_reference():
+    vars_ = {"rec_0": "record", "p_cust": "integer", "r_row": "orders%rowtype"}
+    assert set(pa.record_var_names(vars_)) == {"rec_0", "r_row"}
+    rv = ["rec_0", "r_row"]
+    # Nested cursor referencing an outer record var -> detected.
+    assert pa.references_record_var(
+        "SELECT a FROM t WHERE order_id = rec_0.k", rv) == "rec_0"
+    # A column whose name merely contains a record-var name -> NOT a match.
+    assert pa.references_record_var(
+        "SELECT a FROM t WHERE my_rec_0.x = 1", rv) == ""
+    # No record reference -> "".
+    assert pa.references_record_var(
+        "SELECT a FROM t WHERE customer_id = p_cust", rv) == ""
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

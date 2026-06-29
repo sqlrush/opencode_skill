@@ -119,9 +119,21 @@ def tune_cursors(db, qualified: str, only: list[str], binds: dict) -> CursorTune
     cursors: list[CursorEvidence] = []
     skipped: list[pa.CursorDecl] = []
 
+    # Record/composite variables (e.g. an outer cursor's `rec_N record`). A
+    # nested cursor SELECT that references `recvar.field` depends on the enclosing
+    # loop and cannot be EXPLAINed standalone — skip it cleanly with a clear
+    # reason instead of letting substitution mangle it into a syntax error.
+    record_vars = pa.record_var_names(proc.vars)
+
     for cur in pa.extract_cursors(proc.body):
         if only_set and cur.name.lower() not in only_set:
             continue
+        if cur.eligible:
+            rv = pa.references_record_var(cur.select_sql, record_vars)
+            if rv:
+                cur.eligible = False
+                cur.skip_reason = (
+                    f"引用外层游标记录变量 {rv}.*（依赖循环上下文，非独立可执行）")
         if not cur.eligible:
             skipped.append(cur)
             continue
