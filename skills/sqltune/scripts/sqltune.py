@@ -69,6 +69,12 @@ def _tune(db, *, original_sql: str, binds: list[str], do_analyze: bool,
 
 def tune_by_id(db, raw_id: str, binds: list[str], do_analyze: bool) -> TuneResult:
     fr = sql_fetch(db, raw_id)
+    if fr.truncated:
+        raise ValueError(
+            f"sql id {raw_id} 的文本被 openGauss 截断（{fr.truncated_reason}）——"
+            f"track_activity_query_size 限制了留存长度，数据库里就没有完整 SQL。"
+            f"无法对半截 SQL 做调优。请改用 `--sql-stdin` 传入完整 SQL 文本"
+            f"（或调大 track_activity_query_size 并让该 SQL 重新执行后再按 id 取）。")
     return _tune(db, original_sql=fr.sql, binds=binds, do_analyze=do_analyze,
                  sql_id=fr.sql_id, source=fr.source, schema=fr.schema)
 

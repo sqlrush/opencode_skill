@@ -29,6 +29,14 @@ import render  # noqa: E402
 
 _PLACEHOLDER_RE = re.compile(r"\?|\$\d+|(?:^|[^:])(:[a-zA-Z_]\w*)")
 
+# Tokens that cannot legitimately end a complete statement — if the stored text
+# stops here, openGauss cut it off mid-statement (track_activity_query_size cap).
+_INCOMPLETE_TAIL = frozenset({
+    "select", "from", "where", "and", "or", "in", "not", "join", "on", "by",
+    "group", "order", "having", "union", "as", "exists", "between", "like",
+    "limit", "offset", "case", "when", "then", "else",
+})
+
 
 @dataclass(frozen=True)
 class FetchResult:
@@ -38,6 +46,8 @@ class FetchResult:
     source: str  # statement_history | statement
     normalized: bool
     placeholders: int
+    truncated: bool = False
+    truncated_reason: str = ""
 
 
 def count_placeholders(sql_text: str) -> int:
@@ -46,6 +56,41 @@ def count_placeholders(sql_text: str) -> int:
         if m.group(1) or m.group(0).startswith("?") or m.group(0).startswith("$"):
             n += 1
     return n
+
+
+def looks_truncated(sql: str) -> tuple[bool, str]:
+    """Detect SQL cut off by openGauss's stored-text cap. DB-free heuristics."""
+    s = sql.strip()
+    if not s:
+        return False, ""
+    depth, i, n = 0, 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "'":
+            i += 1
+            while i < n:
+                if s[i] == "'":
+                    if i + 1 < n and s[i + 1] == "'":
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        i += 1
+    if depth > 0:
+        return True, f"{depth} 个未闭合的左括号"
+    tail = s.rstrip(";").rstrip()
+    if tail.endswith(("(", ",")):
+        return True, f"结尾停在 '{tail[-1]}'"
+    words = tail.split()
+    if words and words[-1].lower() in _INCOMPLETE_TAIL:
+        return True, f"结尾停在残词 '{words[-1]}'"
+    return False, ""
 
 
 def sql_fetch(db, raw_id: str) -> FetchResult:
@@ -82,14 +127,20 @@ LIMIT 1"""
         source = "statement"
 
     n = count_placeholders(query)
+    truncated, reason = looks_truncated(query)
     return FetchResult(sql_id=raw_id, sql=query, schema=schema or "",
-                       source=source, normalized=n > 0, placeholders=n)
+                       source=source, normalized=n > 0, placeholders=n,
+                       truncated=truncated, truncated_reason=reason)
 
 
 def fetch_report(r: FetchResult) -> str:
     out = f"## SQL Fetch {r.sql_id}\n\n- Source: `dbe_perf.{r.source}`\n"
     if r.schema:
         out += f"- Schema: `{r.schema}`\n"
+    if r.truncated:
+        out += (f"- 🛑 **SQL 被 openGauss 截断**（{r.truncated_reason}）：留存文本受 "
+                f"`track_activity_query_size` 限制，数据库里没有完整 SQL。**不要**拿这段半截 SQL "
+                f"去 EXPLAIN/调优——请向用户索要完整 SQL 并用 `--sql-stdin` 传入。\n")
     if r.normalized:
         out += (f"- ⚠️ Normalized SQL with {r.placeholders} placeholder(s): "
                 f"replace them with real values before EXPLAIN/collect.\n")

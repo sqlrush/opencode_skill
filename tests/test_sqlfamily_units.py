@@ -29,6 +29,19 @@ def test_sqlfetch_count_placeholders():
     assert sqlfetch.count_placeholders("x::int") == 0
 
 
+def test_sqlfetch_truncation_detection():
+    # Complete statements -> not truncated.
+    assert sqlfetch.looks_truncated("SELECT 1")[0] is False
+    assert sqlfetch.looks_truncated("SELECT a FROM t WHERE x IN (1,2,3)")[0] is False
+    # openGauss-cut tails -> truncated.
+    assert sqlfetch.looks_truncated("SELECT a FROM t WHERE p IN (\n  SELECT")[0] is True  # unbalanced paren
+    assert sqlfetch.looks_truncated("SELECT a, b,")[0] is True                            # trailing comma
+    assert sqlfetch.looks_truncated("SELECT a FROM t WHERE x =")[0] is False              # '=' not in tail set
+    assert sqlfetch.looks_truncated("SELECT a FROM t ORDER BY")[0] is True                # dangling keyword
+    # A paren inside a string literal must not trip the balance check.
+    assert sqlfetch.looks_truncated("SELECT '(' AS x FROM t")[0] is False
+
+
 def test_explain_scan_plan_seqscan_sort():
     plan = ("Sort  (cost=1..2 rows=1)\n"
             "  ->  Seq Scan on t  (cost=0..1 rows=1)")
