@@ -3,7 +3,11 @@ name: explain
 version: 2.0.0
 description: "展示 OpenGauss/GaussDB 上某条 SQL 的执行计划，并给出确定性风险标注（Seq Scan、Sort、Nested Loop）。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"📋","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "📋"
+  family: sql-optimization
 ---
 
 # Explain（OpenGauss/GaussDB）

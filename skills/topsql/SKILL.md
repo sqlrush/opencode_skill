@@ -3,7 +3,11 @@ name: topsql
 version: 2.0.0
 description: "在 OpenGauss/GaussDB 上按总耗时/平均/调用数/逻辑读/行数排名最耗资源的 SQL（无阈值）。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"🔥","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "🔥"
+  family: sql-optimization
 ---
 
 # Top SQL（OpenGauss/GaussDB）
@@ -17,7 +21,7 @@ metadata: {"opencode":{"emoji":"🔥","runtime":"python3","requires":{"pip":["pg
    ```
 
    `--by` 可选值：`time`（总耗时）、`avg`（平均耗时）、`calls`（调用次数）、`reads`（逻辑读）、`rows`（返回行数）。
-4. 说明是什么在主导整体负载、为什么。对头部条目可建议 `python3 ../sqlfetch/scripts/sqlfetch.py -c <conn> <SQL_ID>` 或走 sqltune 工作流。
+4. 说明是什么在主导整体负载、为什么。对头部条目可建议 `python3 {baseDir}/../sqlfetch/scripts/sqlfetch.py -c <conn> <SQL_ID>` 或走 sqltune 工作流。
 
 ## 安全红线
 

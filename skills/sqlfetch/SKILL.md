@@ -3,7 +3,11 @@ name: sqlfetch
 version: 2.0.0
 description: "把 OpenGauss/GaussDB 的 unique_sql_id 解析为完整 SQL 文本，并标注需替换的归一化占位符。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"🔎","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "🔎"
+  family: sql-optimization
 ---
 
 # SQL Fetch（OpenGauss/GaussDB）

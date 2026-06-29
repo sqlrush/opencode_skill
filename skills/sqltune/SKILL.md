@@ -3,7 +3,11 @@ name: sqltune
 version: 2.0.0
 description: "按 sql_id 或文本调优 OpenGauss/GaussDB 慢 SQL：脚本采集证据，并对每个索引/改写方案先验证（hypopg + cost 校验）再呈现。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"🔬","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "🔬"
+  family: sql-optimization
 ---
 
 # SQL Tune（OpenGauss/GaussDB）

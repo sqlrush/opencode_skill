@@ -3,7 +3,11 @@ name: proctune
 version: 2.0.0
 description: "调优 OpenGauss/GaussDB 存储过程：脚本采证据，对只读游标 SELECT 做经验证的索引/改写优化（hypopg+cost+等价）；写逻辑与结构只给循证建议，不自动改写。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"⚙️","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "⚙️"
+  family: stored-procedure
 ---
 
 # Proc Tune（OpenGauss/GaussDB 存储过程）

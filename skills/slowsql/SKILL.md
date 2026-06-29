@@ -3,7 +3,11 @@ name: slowsql
 version: 2.0.0
 description: "在 OpenGauss/GaussDB 上按平均耗时阈值（ms）发现慢 SQL，并给出下一步调优指引。"
 allowed-tools: ["exec", "read"]
-metadata: {"opencode":{"emoji":"🐢","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+compatibility: opencode
+metadata:
+  runtime: python3
+  emoji: "🐢"
+  family: sql-optimization
 ---
 
 # 慢 SQL（OpenGauss/GaussDB）
@@ -17,7 +21,7 @@ metadata: {"opencode":{"emoji":"🐢","runtime":"python3","requires":{"pip":["pg
    ```
 
 4. 总结最严重的语句（调用次数 × 平均耗时 = 影响）。可建议：
-   - `python3 ../sqlfetch/scripts/sqlfetch.py -c <conn> <SQL_ID>` 取完整 SQL 文本；
+   - `python3 {baseDir}/../sqlfetch/scripts/sqlfetch.py -c <conn> <SQL_ID>` 取完整 SQL 文本；
    - 对头部语句走 sqltune 工作流。
    `--format json` 输出含 `cpu_sec`：平均慢但 CPU≈0 往往是锁/等待（contention），不要盲目加索引。
 5. 结果为空 → 检查 `enable_stmt_track`，或降低阈值。

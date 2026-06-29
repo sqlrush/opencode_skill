@@ -23,6 +23,15 @@ else — probes, report rendering, analysis — lives inside each skill's `scrip
 python3 -m pip install -r requirements.txt
 ```
 
+## Install into OpenCode
+
+```bash
+./install-opencode.sh          # → ~/.config/opencode/skills/
+```
+
+Full step-by-step (prerequisites, DB connection setup, verification,
+troubleshooting): see [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md).
+
 Connections are read from `~/.gdaa/config.yaml` + `~/.gdaa/credentials/` (the
 same store the Go `gdaa` tool uses), or override the base dir with `GDAA_HOME`.
 `GDAA_PASSWORD` overrides the stored secret for one-off / CI use.

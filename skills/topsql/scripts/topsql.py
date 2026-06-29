@@ -18,7 +18,10 @@ from typing import Optional
 
 _HERE = pathlib.Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parent))          # sibling modules
-sys.path.insert(0, str(_HERE.parents[3]))      # repo root for `common`
+for _anc in _HERE.parents:                      # locate common/ (repo root or install dir)
+    if (_anc / "common" / "__init__.py").exists():
+        sys.path.insert(0, str(_anc))
+        break
 
 import common  # noqa: E402
 import render  # noqa: E402
