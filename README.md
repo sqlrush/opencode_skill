@@ -29,8 +29,21 @@ same store the Go `gdaa` tool uses), or override the base dir with `GDAA_HOME`.
 
 ## Scope (current)
 
-- `skills/sqltune`  — SQL tuning (hypopg + cost verification)
-- `skills/proctune` — stored-procedure tuning
+SQL-optimization family:
+
+- `skills/slowsql`  — find slow SQL by avg-time threshold
+- `skills/topsql`   — rank the most resource-consuming SQL
+- `skills/sqlfetch` — resolve a unique_sql_id to full SQL text
+- `skills/explain`  — execution plan + deterministic risk findings
+- `skills/sqltune`  — deep SQL tuning (hypopg + cost + equivalence verification)
+
+Stored-procedure family:
+
+- `skills/proctune` — stored-procedure analysis + cursor SELECT tuning
+
+Each skill's output is cross-validated byte-identical against the Go `gdaa`
+binary (slowsql/topsql/sqlfetch differ only in the trailing "Next:" hint, which
+points at the local Python scripts instead of `gdaa`).
 
 Driver: `pg8000` (pure Python; verified against openGauss-lite 5.0.3 for both
 `opengauss` and `gaussdb` connection types).

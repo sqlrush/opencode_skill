@@ -1,0 +1,27 @@
+---
+name: slowsql
+version: 2.0.0
+description: "在 OpenGauss/GaussDB 上按平均耗时阈值（ms）发现慢 SQL，并给出下一步调优指引。"
+allowed-tools: ["exec", "read"]
+metadata: {"opencode":{"emoji":"🐢","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+---
+
+# 慢 SQL（OpenGauss/GaussDB）
+
+1. **预检。** 运行 `python3 {baseDir}/scripts/slowsql.py -h`。若报缺少依赖，`python3 -m pip install pg8000 cryptography PyYAML` 后停下让用户处理。
+2. **选择连接。** 连接名沿用 `~/.gdaa/config.yaml` 的 `name` 字段。仅在有多个时才问用哪一个。
+3. 运行（按需调 `--threshold` 平均 ms）：
+
+   ```bash
+   python3 {baseDir}/scripts/slowsql.py -c <conn> --threshold 1000 --limit 20
+   ```
+
+4. 总结最严重的语句（调用次数 × 平均耗时 = 影响）。可建议：
+   - `python3 ../sqlfetch/scripts/sqlfetch.py -c <conn> <SQL_ID>` 取完整 SQL 文本；
+   - 对头部语句走 sqltune 工作流。
+   `--format json` 输出含 `cpu_sec`：平均慢但 CPU≈0 往往是锁/等待（contention），不要盲目加索引。
+5. 结果为空 → 检查 `enable_stmt_track`，或降低阈值。
+
+## 安全红线
+
+- **只通过本技能脚本取数**：`{baseDir}/scripts/slowsql.py` 走只读会话、自动解密 `~/.gdaa` 凭据。**你自己不要**直接写 Python/psql/gsql 连库、不要读取或解密 `~/.gdaa/credentials/`。脚本未覆盖的能力，如实说明「当前无此能力」并停止。

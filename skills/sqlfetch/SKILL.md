@@ -1,0 +1,24 @@
+---
+name: sqlfetch
+version: 2.0.0
+description: "把 OpenGauss/GaussDB 的 unique_sql_id 解析为完整 SQL 文本，并标注需替换的归一化占位符。"
+allowed-tools: ["exec", "read"]
+metadata: {"opencode":{"emoji":"🔎","runtime":"python3","requires":{"pip":["pg8000","cryptography","PyYAML"]}}}
+---
+
+# SQL Fetch（OpenGauss/GaussDB）
+
+1. **预检。** 运行 `python3 {baseDir}/scripts/sqlfetch.py -h`。若报缺少依赖，`python3 -m pip install pg8000 cryptography PyYAML` 后停下让用户处理。
+2. **选择连接。** 连接名沿用 `~/.gdaa/config.yaml` 的 `name` 字段（与 gdaa 共用，文件只含元数据无密码）。仅在有多个时才问用哪一个。
+3. 运行：
+
+   ```bash
+   python3 {baseDir}/scripts/sqlfetch.py -c <conn> <unique_sql_id>
+   ```
+
+4. 若输出提示存在占位符（Normalized），说明这是归一化 SQL，向用户索要真实值并展示替换后的 SQL。
+5. 下一步建议：走 explain 工作流快速看计划，或走 sqltune 工作流做深度调优。
+
+## 安全红线
+
+- **只通过本技能脚本取数**：`{baseDir}/scripts/sqlfetch.py` 走只读会话、自动解密 `~/.gdaa` 凭据。**你自己不要**直接写 Python/psql/gsql 连库、不要读取或解密 `~/.gdaa/credentials/`。脚本未覆盖的能力，如实说明「当前无此能力」并停止。
