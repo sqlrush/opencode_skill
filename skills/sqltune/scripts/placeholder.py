@@ -134,6 +134,15 @@ def _choose(left_ctx: str) -> tuple[str, str]:
         return "0", "rule"
     if trimmed.endswith("interval"):
         return "'1 day'", "rule"
+    # Typed-literal placeholders (DATE ?, TIMESTAMP ?, TIME ?) need a quoted
+    # literal — a bare number gives "syntax error near N". Whole-word match so
+    # column names like order_date / start_time are NOT mistaken for the keyword.
+    if _ends_with_keyword(trimmed, "timestamp"):
+        return "'2024-01-01 00:00:00'", "rule"
+    if _ends_with_keyword(trimmed, "date"):
+        return "'2024-01-01'", "rule"
+    if _ends_with_keyword(trimmed, "time"):
+        return "'12:00:00'", "rule"
     if _ends_with_keyword(trimmed, "like") or _ends_with_keyword(trimmed, "ilike"):
         return "'%test%'", "rule"
     if _TO_CHAR_FORMAT_RE.search(left_ctx):

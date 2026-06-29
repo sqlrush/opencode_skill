@@ -31,6 +31,19 @@ def test_substitute_int_vs_text_vs_date():
     assert [s.value for s in r.substitutions] == ["1", "'test'", "'2024-01-01'"]
 
 
+def test_substitute_typed_date_literal():
+    # DATE ?/TIMESTAMP ?/TIME ? must become quoted literals (not a bare number,
+    # which yields "syntax error near N").
+    assert placeholder.substitute(
+        "SELECT * FROM t WHERE d >= DATE ?", []).substitutions[0].value == "'2024-01-01'"
+    assert placeholder.substitute(
+        "SELECT * FROM t WHERE ts > TIMESTAMP ?", []).substitutions[0].value == "'2024-01-01 00:00:00'"
+    # A column literally named order_date must NOT trip the keyword rule; the
+    # '=' op rule still gives it a valid quoted date value.
+    assert placeholder.substitute(
+        "SELECT * FROM t WHERE order_date = ?", []).substitutions[0].value == "'2024-01-01'"
+
+
 def test_substitute_to_char_followup():
     r = placeholder.substitute("SELECT * FROM t WHERE TO_CHAR(d, ?) = ?", [])
     vals = [s.value for s in r.substitutions]
