@@ -92,6 +92,9 @@ def test_parse_text_lines():
 def test_parse_text_empty():
     assert gp.parse_text_result("") == ([], [])
 
+def test_parse_text_no_trailing_newline():
+    assert gp.parse_text_result("on") == ([], [("on",)])
+
 def test_parse_error_with_sqlstate():
     err = "gsql: ERROR:  42P01: relation \"foo\" does not exist\n"
     assert gp.parse_gsql_error(err) == 'ERROR: relation "foo" does not exist (SQLSTATE 42P01)'
@@ -101,3 +104,6 @@ def test_parse_error_without_sqlstate():
 
 def test_parse_error_fallback():
     assert gp.parse_gsql_error("could not connect to server") == "could not connect to server"
+
+def test_parse_error_lowercase_token_not_sqlstate():
+    assert gp.parse_gsql_error("gsql: ERROR:  error: boom") == "ERROR: error: boom"

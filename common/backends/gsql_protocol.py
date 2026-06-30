@@ -72,7 +72,7 @@ def wrap_select_json(sql: str) -> str:
     return f"SELECT json_agg(row_to_json(_t)) FROM ({inner}) _t"
 
 
-_ERR_RE = re.compile(r"ERROR:\s+(?:([0-9A-Za-z]{5}):\s+)?(.*)")
+_ERR_RE = re.compile(r"ERROR:\s+(?:([0-9A-Z]{5}):\s+)?(.*)")
 
 
 def parse_json_result(stdout: str) -> tuple[list[str], list[tuple]]:
