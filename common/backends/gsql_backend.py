@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 from .base import Backend, DBError
 from . import gsql_protocol as gp
@@ -102,8 +102,13 @@ class GsqlBackend(Backend):
 
     def query_in_rollback(self, sql, params=None):
         body, vars_ = gp.rewrite_params(sql, params or ())
-        prefix = self._prefix(read_only=False)
-        full = f"BEGIN; {prefix} {body}; ROLLBACK;".replace("  ", " ").strip()
+        parts = ["BEGIN;"]
+        prefix = self._prefix(read_only=False)  # 回滚路径不注入只读钉
+        if prefix:
+            parts.append(prefix)
+        parts.append(f"{body};")
+        parts.append("ROLLBACK;")
+        full = " ".join(parts)
         return gp.parse_text_result(self._run(full, vars_))
 
     def set_statement_timeout(self, seconds: int) -> None:

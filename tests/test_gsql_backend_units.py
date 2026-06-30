@@ -31,14 +31,15 @@ def test_open_verifies_with_select_1(monkeypatch):
     _patch(monkeypatch, out="[{\"?column?\":1}]\n", sink=calls)
     b = gb.GsqlBackend.open(_conn(), "secret")
     assert isinstance(b, gb.GsqlBackend)
-    # 验活确有一次调用
+    # 验活确有一次调用，且发出的就是 SELECT 1
     assert calls
+    assert any("SELECT 1" in a for a in calls[0][0])
 
 def test_password_goes_via_env_not_argv(monkeypatch):
     calls = []
     _patch(monkeypatch, out="[{\"?column?\":1}]\n", sink=calls)
     gb.GsqlBackend.open(_conn(), "secretpw")
-    argv, kw = calls[-1]
+    argv, kw = calls[0]
     assert "secretpw" not in " ".join(argv)
     assert kw["env"]["PGPASSWORD"] == "secretpw"
 
@@ -84,6 +85,18 @@ def test_query_in_rollback_wraps_begin_rollback(monkeypatch):
     b.query_in_rollback("EXPLAIN ANALYZE INSERT INTO t VALUES (1)")
     sent = " ".join(calls[-1][0])
     assert "BEGIN;" in sent and "ROLLBACK;" in sent
+
+def test_query_in_rollback_with_timeout(monkeypatch):
+    calls = []
+    _patch(monkeypatch, out="Seq Scan\n", sink=calls)
+    b = gb.GsqlBackend.open(_conn(), "pw", read_only=False)
+    b.set_statement_timeout(5)
+    calls.clear()
+    b.query_in_rollback("EXPLAIN ANALYZE INSERT INTO t VALUES (1)")
+    sent = " ".join(calls[-1][0])
+    assert "BEGIN;" in sent and "ROLLBACK;" in sent
+    assert "SET statement_timeout = 5000;" in sent
+    assert "INSERT INTO t VALUES (1)" in sent
 
 def test_sql_error_raises_parsed_dberror(monkeypatch):
     _patch(monkeypatch, rc=1, err='gsql: ERROR:  42P01: relation "x" does not exist\n')
