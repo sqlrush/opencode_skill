@@ -9,7 +9,7 @@ python3 -m pip install pg8000 cryptography PyYAML
 python3 {baseDir}/scripts/wdr.py -h     # 验证脚本可运行
 ```
 
-连接元数据复用 gdaa 的 `~/.gdaa/config.yaml`（无密码），口令经本机密钥 AES-256-GCM 加密存于 `~/.gdaa/credentials/*.enc`，由脚本解密；也可用环境变量 `GDAA_PASSWORD` 覆盖。`-c <NAME>` 用 `config.yaml` 里 `connections[].name`。
+连接配置目录由 `GSDB_HOME` 指定（任意名/路径，默认 `~/.gdaa`，旧 `GDAA_HOME` 仍兼容）：`$GSDB_HOME/config.yaml`（无密码），口令经本机密钥 AES-256-GCM 加密存于 `$GSDB_HOME/credentials/*.enc`，由脚本解密；也可用环境变量 `GSDB_PASSWORD`（旧 `GDAA_PASSWORD` 仍兼容）覆盖。`-c <NAME>` 用 `config.yaml` 里 `connections[].name`。
 
 ## 症状对照
 

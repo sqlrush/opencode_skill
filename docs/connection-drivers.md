@@ -33,8 +33,8 @@ connections:
 |---|---|
 | `GDAA_GSQL` | 覆盖 gsql 二进制路径（默认在 `PATH` 查找 `gsql`）。示例：`GDAA_GSQL=/usr/local/bin/gsql` |
 | `PGSSLMODE` | 覆盖 SSL 模式（若 config.yaml 里也有 `sslmode` 字段，配置文件优先，未设置时 `PGSSLMODE` 生效）；gsql 后端通过 `env["PGSSLMODE"]` 传入子进程 |
-| `GDAA_HOME` | 覆盖 `~/.gdaa` 根目录路径 |
-| `GDAA_PASSWORD` | 临时覆盖存储的密码（一次性使用 / CI 用） |
+| `GSDB_HOME` | 连接配置目录路径（任意名/路径，默认 `~/.gdaa`；旧 `GDAA_HOME` 仍兼容，优先级 `GSDB_HOME` > `GDAA_HOME`） |
+| `GSDB_PASSWORD` | 临时覆盖存储的密码（一次性使用 / CI 用；旧 `GDAA_PASSWORD` 仍兼容，优先级 `GSDB_PASSWORD` > `GDAA_PASSWORD`） |
 
 ---
 
@@ -206,7 +206,7 @@ cat ~/.gdaa/config.yaml
 DBError: password authentication failed for user "gaussdb"
 ```
 
-**解决**：用 `gdaa connect add <name> ...` 重新保存凭据，或 `export GDAA_PASSWORD=...` 临时覆盖。
+**解决**：用 `gdaa connect add <name> ...` 重新保存凭据，或 `export GSDB_PASSWORD=...`（旧 `GDAA_PASSWORD` 仍兼容）临时覆盖。
 
 ---
 

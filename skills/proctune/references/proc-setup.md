@@ -12,9 +12,10 @@
 
 连接信息复用 `~/.gdaa`（与 SQL 优化族共用的连接+凭据存储），通过 `-c <name>` 选连接。新建 / 查看连接见 `docs/INSTALL-opencode.md` 第 1 步：
 
-- 已有连接：`cat ~/.gdaa/config.yaml` 看 name 列表（不含密码）。
-- 手工新建：写 `~/.gdaa/config.yaml` + 用本仓库 `common` 的 `save_secret` 加密口令（落 `~/.gdaa/credentials/<name>.enc`）。
-- 非交互 / CI 场景用环境变量 `GDAA_PASSWORD` 覆盖存储口令；`GDAA_HOME` 覆盖根目录。
+- 连接配置目录由 `GSDB_HOME` 指定（任意名/路径，默认 `~/.gdaa`，旧 `GDAA_HOME` 仍兼容）。
+- 已有连接：`cat "$GSDB_HOME/config.yaml"` 看 name 列表（不含密码）。
+- 手工新建：写 `$GSDB_HOME/config.yaml` + 用本仓库 `common` 的 `save_secret` 加密口令（落 `$GSDB_HOME/credentials/<name>.enc`）。
+- 非交互 / CI 场景用环境变量 `GSDB_PASSWORD`（旧 `GDAA_PASSWORD` 仍兼容）覆盖存储口令；`GSDB_HOME` 覆盖根目录。
 
 口令以 AES-256-GCM 加密存储；`proctune` 全程只用 `-c <name>`，不构造含密码的连接串。验证连接可用：跑一次 `proctune.py collect -c <name> <schema.proc>`，能取到 `## Procedure Source` 即连通。
 
@@ -31,8 +32,8 @@
 |---|---|---|
 | `ModuleNotFoundError: No module named 'pg8000'` | 缺 Python 依赖 | `python3 -m pip install -r requirements.txt` |
 | `ModuleNotFoundError: No module named 'common'` | 没用安装脚本（漏拷 `common/`） | 重跑 `install-opencode.sh` |
-| `no connection named 'xxx'` | 连接名未配置 | 见「二、配置连接」，核对 `~/.gdaa/config.yaml` |
-| 连接失败（退出码 2） | host/port/凭据错或库不可达 | 跑一次 `proctune.py collect` 验证；确认网络与账号；或用 `GDAA_PASSWORD` |
+| `no connection named 'xxx'` | 连接名未配置 | 见「二、配置连接」，核对 `$GSDB_HOME/config.yaml` |
+| 连接失败（退出码 2） | host/port/凭据错或库不可达 | 跑一次 `proctune.py collect` 验证；确认网络与账号；或用 `GSDB_PASSWORD`（旧 `GDAA_PASSWORD` 仍兼容） |
 | 权限不足（退出码 3） | 账号缺 `pg_get_functiondef` / `dbe_perf` / `gs_index_advise` / hypopg 权限 | 用有相应读取/调优权限的账号 |
 | `## Runtime Attribution` 为空或标「不可用」 | 未开 `track_stmt_stat_level` 捕获嵌套语句 | 见「三、开启运行时归因」；不开则按纯静态分析进行 |
 | `## Verified Index Candidates` 显示无候选 | gs_index_advise 未发现，或合成值下无收益 | 用 `--bind <var=value>` 传真实值重验；或仅作未验证思路呈现 |
