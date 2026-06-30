@@ -1,59 +1,49 @@
-# OpenGauss/GaussDB SQL Tuning Methodology
+# OpenGauss/GaussDB SQL 调优方法论
 
-Checklist distilled from the opendb tuner. Work through it against the
-evidence bundle; cite numbers, not impressions.
+从 opendb tuner 提炼的清单。对着证据包逐条走;引用数字,不凭印象。
 
-## 1. Plan walkthrough
+## 1. 计划走查
 
-- Identify the most expensive node (highest cost share / actual time when analyzed).
-- For each Seq Scan: is the table large (`## Tables` pages/tuples)? Is the
-  Filter selective (`## Column Statistics` n_distinct, null_frac)?
-  - Selective filter + large table + no matching index → index candidate.
-  - n_distinct negative values are ratios (e.g. -0.5 = 50% distinct rows).
-- For each Sort: does an existing index already order by the Sort Key
-  (`## Indexes` DEF)? If not and the sort is hot, consider an index;
-  check `work_mem` for spills (EXPLAIN ANALYZE shows "Sort Method: external").
-- For Nested Loop: multiply inner-rows × outer-loops; if inner side is a
-  Seq Scan, a join-key index usually wins.
-- Hash Join is normally fine; verify build side fits work_mem.
+- 找最贵的节点(cost 占比最高 / 有 ANALYZE 时看 actual time)。
+- 每个 Seq Scan:表大不大(`## Tables` 的 pages/tuples)?Filter 选择性高不高(`## Column Statistics` 的 n_distinct、null_frac)?
+  - 选择性高的 filter + 大表 + 无匹配索引 → 索引候选。
+  - n_distinct 负值是比例(如 -0.5 = 50% 不同值)。
+- 每个 Sort:是否已有索引按 Sort Key 排序(`## Indexes` 的 DEF)?没有且该 sort 是热点,考虑建索引;查 `work_mem` 是否溢出(EXPLAIN ANALYZE 显示 "Sort Method: external")。
+- Nested Loop:内层行数 × 外层循环数;内层若是 Seq Scan,连接键索引通常能赢。
+- Hash Join 一般没问题;确认 build 侧能放进 work_mem。
 
-## 2. Cardinality sanity
+## 2. 基数核对
 
-- Compare plan estimated rows vs reltuples and (when --analyze) actual rows.
-- >10× mis-estimate → stale stats: recommend `ANALYZE <table>;` first,
-  and check `default_statistics_target` for skewed columns.
+- 比对计划估算行数 vs reltuples,以及(--analyze 时)实际行数。
+- 偏差 >10× → 统计陈旧:先建议 `ANALYZE <table>;`,并查倾斜列的 `default_statistics_target`。
 
-## 3. Index recommendations
+## 3. 索引建议
 
-- Composite index column order: equality predicates first, then range,
-  then ORDER BY columns.
-- Verify no existing index already covers the prefix (`## Indexes`).
-- Always provide exact DDL: `CREATE INDEX idx_<table>_<cols> ON <table>(<cols>);`
-- Warn: OpenGauss CREATE INDEX takes ShareLock (blocks writes); suggest
-  off-peak execution; CONCURRENTLY semantics differ on OpenGauss — verify on the target version before recommending it.
+- 复合索引列序:等值谓词在前,再范围,再 ORDER BY 列。
+- 确认没有已存在的索引覆盖了该前缀(`## Indexes`)。
+- 永远给出确切 DDL:`CREATE INDEX idx_<table>_<cols> ON <table>(<cols>);`
+- 提醒:OpenGauss CREATE INDEX 持 ShareLock(阻塞写);建议错峰执行;CONCURRENTLY 语义在 OpenGauss 上有差异 —— 推荐前先在目标版本上验证。
 
-## 4. GUC review (against `## Key Parameters (GUC)`)
+## 4. GUC 审查(对照 `## Key Parameters (GUC)`)
 
-| Parameter | Heuristic |
+| 参数 | 经验法则 |
 |---|---|
-| work_mem | Sort/Hash spills → raise session-level first, not globally |
-| effective_cache_size | Should reflect available OS cache; too low biases away from index scans |
-| random_page_cost | SSD storage → 1.1–2.0; default 4 over-penalizes index scans |
-| max_parallel_workers_per_gather | Large scans may benefit; verify CPU headroom |
-| default_statistics_target | Raise per-column for skewed data, then ANALYZE |
+| work_mem | Sort/Hash 溢出 → 先会话级调高,别全局 |
+| effective_cache_size | 应反映可用 OS 缓存;过低会让优化器偏离索引扫描 |
+| random_page_cost | SSD 存储 → 1.1–2.0;默认 4 过度惩罚索引扫描 |
+| max_parallel_workers_per_gather | 大扫描可能受益;确认 CPU 有余量 |
+| default_statistics_target | 倾斜数据按列调高,然后 ANALYZE |
 
-Prefer SQL rewrite > index > session GUC > global GUC (ascending blast radius).
+优先级:SQL 改写 > 索引 > 会话级 GUC > 全局 GUC(影响范围递增)。
 
-## 5. Rewrite patterns
+## 5. 改写模式
 
-- `SELECT *` → project needed columns (enables index-only scans).
-- Leading-wildcard LIKE cannot use btree; consider trigram/full-text.
-- OR across columns → UNION ALL of indexed branches.
-- Functions wrapping indexed columns defeat the index; move the function
-  to the constant side.
-- Large IN lists → JOIN against VALUES.
+- `SELECT *` → 只投影需要的列(可启用 index-only scan)。
+- 前导通配的 LIKE 用不了 btree;考虑 trigram / 全文检索。
+- 跨列 OR → 各索引分支的 UNION ALL。
+- 函数包住索引列会废掉索引;把函数挪到常量侧。
+- 大 IN 列表 → 改成对 VALUES 的 JOIN。
 
-## 6. Recommendation ranking
+## 6. 建议排序
 
-Order by (expected speedup × confidence) / risk. One primary
-recommendation; alternatives listed under "if constraints forbid".
+按 (预期加速 × 置信度) / 风险 排序。给一条主建议;备选放在「若受约束不可用」下。

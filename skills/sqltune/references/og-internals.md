@@ -1,26 +1,24 @@
-# OpenGauss/GaussDB Internals Cheat Sheet
+# OpenGauss/GaussDB 内核速查表
 
-## dbe_perf views used by these skills
+## 本工具用到的 dbe_perf 视图
 
-| View | Content | Notes |
+| 视图 | 内容 | 备注 |
 |---|---|---|
-| dbe_perf.statement | Normalized statement aggregates (unique_sql_id, n_calls, total_elapse_time µs, n_returned_rows, n_blocks_hit/fetched) | Source for slowsql/topsql |
-| dbe_perf.statement_history | Per-execution history with literal SQL + schema_name | Needs `enable_stmt_track=on`; literals need `track_stmt_parameter=on` |
+| dbe_perf.statement | 归一化语句聚合(unique_sql_id、n_calls、total_elapse_time µs、n_returned_rows、n_blocks_hit/fetched) | slowsql/topsql 的数据源 |
+| dbe_perf.statement_history | 单次执行历史,含字面 SQL + schema_name | 需 `enable_stmt_track=on`;字面量需 `track_stmt_parameter=on` |
 
-`total_elapse_time` is in microseconds; the scripts convert to ms/s.
+`total_elapse_time` 单位是微秒;脚本会转成 ms/s。
 
-## Plan node quick reference
+## 执行计划节点速查
 
-- Seq Scan / Index Scan / Index Only Scan / Bitmap Heap Scan — access paths.
-- Nested Loop / Hash Join / Merge Join — join strategies.
-- "Sort Method: external merge" (ANALYZE output) — work_mem spill.
-- Row-store vs column-store tables (orientation=column) have different
-  optimal access patterns; check table DDL when plans look odd.
+- Seq Scan / Index Scan / Index Only Scan / Bitmap Heap Scan —— 访问路径。
+- Nested Loop / Hash Join / Merge Join —— 连接策略。
+- "Sort Method: external merge"(ANALYZE 输出)—— work_mem 溢出。
+- 行存 vs 列存表(orientation=column)的最优访问模式不同;计划看着反常时查表 DDL。
 
-## OG vs vanilla PostgreSQL differences that matter
+## OG 与原生 PostgreSQL 的关键差异
 
-- Authentication: OG uses sha256, GaussDB uses SCRAM-SHA256(10) — vanilla
-  psql/libpq clients typically cannot connect; these skills use the pure-Python pg8000 driver.
-- GaussDB requires `database=` DSN key and simple query protocol (xid64).
-- Some `enable_*` planner GUCs are OG-specific; read actual values from the `## Key Parameters (GUC)` evidence section rather than assuming PG defaults.
-- WDR (workload diagnosis report) exists on OG; out of scope for this toolkit.
+- 认证:OG 用 sha256,GaussDB 用 SCRAM-SHA256(10) —— 原生 psql/libpq 客户端通常连不上;本工具用纯 Python 的 pg8000 驱动。
+- GaussDB 要求 DSN 带 `database=` 键,且走简单查询协议(xid64)。
+- 部分 `enable_*` 优化器 GUC 是 OG 专有;从 `## Key Parameters (GUC)` 证据小节读真实值,别套 PG 默认值。
+- WDR(工作负载诊断报告)在 OG 上存在;本工具已由 `wdr` 技能覆盖(snaps/collect/render)。

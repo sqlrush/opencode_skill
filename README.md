@@ -1,70 +1,59 @@
 # opencode_skill
 
-OpenGauss / GaussDB DBA skills, rewritten in Python from the Go `gdaa` tool.
+OpenGauss / GaussDB 数据库 DBA 技能集,由 Go 版 `gdaa` 工具用 Python 重写。
 
-Structure (per the agreed refactor):
+目录结构(按既定重构方案):
 
 ```
-common/            # ONLY shared layer: connection / credential / read-only driver
+common/            # 唯一共享层:连接 / 凭据 / 只读驱动
 skills/<name>/
-  SKILL.md         # model-facing playbook (invokes the local python scripts)
-  references/      # methodology + GaussDB knowledge base
-  scripts/         # this skill's own logic (entry + vendored probes)
-tests/             # pytest (live tests skip when the connection is absent)
+  SKILL.md         # 面向模型的操作手册(调用本 skill 的 python 脚本)
+  references/      # 方法论 + GaussDB 知识库
+  scripts/         # 本 skill 自己的逻辑(入口 + vendored 探针)
+tests/             # pytest(连接不存在时 live 测试自动跳过)
 ```
 
-Design rule: `common/` is the single shared package (it just connects to the DB
-and decrypts credentials, reusing gdaa's `~/.gdaa` store unchanged). Everything
-else — probes, report rendering, analysis — lives inside each skill's `scripts/`.
+设计原则:`common/` 是唯一共享包(只负责连库 + 解密凭据,复用 gdaa 的 `~/.gdaa` 存储、原样不动)。其余一切——探针、报告渲染、分析——都放在各 skill 的 `scripts/` 里。
 
-## Setup
+## 安装
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
 
-## Install into OpenCode
+## 装进 OpenCode
 
 ```bash
 ./install-opencode.sh          # → ~/.config/opencode/skills/
 ```
 
-Full step-by-step (prerequisites, DB connection setup, verification,
-troubleshooting): see [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md).
+完整步骤(前置依赖、建连接、验证、排障)见 [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md)。
 
-Connections are read from `~/.gdaa/config.yaml` + `~/.gdaa/credentials/` (the
-same store the Go `gdaa` tool uses), or override the base dir with `GDAA_HOME`.
-`GDAA_PASSWORD` overrides the stored secret for one-off / CI use.
+连接信息从 `~/.gdaa/config.yaml` + `~/.gdaa/credentials/` 读取(和 Go 版 `gdaa` 共用同一份存储),也可用 `GDAA_HOME` 改根目录。`GDAA_PASSWORD` 可临时覆盖存储的密码(一次性 / CI 用)。
 
-## Scope (current)
+## 范围(当前)
 
-Full parity with the Go `gdaa` skill set — 10 skills across 3 families.
+已与 Go 版 `gdaa` 技能集**全量对齐** —— 3 个族、10 个 skill。
 
-SQL-optimization family:
+SQL 优化族:
 
-- `skills/slowsql`  — find slow SQL by avg-time threshold
-- `skills/topsql`   — rank the most resource-consuming SQL
-- `skills/sqlfetch` — resolve a unique_sql_id to full SQL text
-- `skills/explain`  — execution plan + deterministic risk findings
-- `skills/sqltune`  — deep SQL tuning (hypopg + cost + equivalence verification)
+- `skills/slowsql`  —— 按平均耗时阈值找慢 SQL
+- `skills/topsql`   —— 按资源消耗排名最重的 SQL
+- `skills/sqlfetch` —— 把 unique_sql_id 还原成完整 SQL 文本
+- `skills/explain`  —— 执行计划 + 确定性风险发现
+- `skills/sqltune`  —— SQL 深度调优(hypopg + 成本 + 等价性验证)
 
-Stored-procedure family:
+存储过程族:
 
-- `skills/proctune` — stored-procedure analysis + cursor SELECT tuning
-- `skills/procinfo` — read-only stored-procedure structural diagnostic (hand off to proctune)
-- `skills/topproc`  — rank the most resource-consuming procedures (pg_stat_user_functions)
+- `skills/proctune` —— 存储过程分析 + 只读游标 SELECT 调优
+- `skills/procinfo` —— 存储过程只读结构诊断(交棒 proctune)
+- `skills/topproc`  —— 按资源消耗排名最重的存储过程(pg_stat_user_functions)
 
-Diagnostics family:
+诊断族:
 
-- `skills/health`   — 12-dimension read-only health check + deterministic findings
-- `skills/wdr`      — WDR snapshot-delta interpretation (7 dims, snaps/collect/render)
+- `skills/health`   —— 12 维只读健康检查 + 确定性发现
+- `skills/wdr`      —— WDR 快照 delta 解读(7 维,snaps/collect/render)
 
-Each skill's output is cross-validated against the Go `gdaa` binary. health and
-wdr were diffed byte-for-byte: same dimensions, headers, threshold strings, and
-findings (wdr's immutable-snapshot evidence is numerically identical, and `wdr
-render` matches except an intentional drop of the "gdaa" word in the footer).
-slowsql/topsql/sqlfetch differ only in the trailing "Next:" hint, which points
-at the local Python scripts instead of `gdaa`.
+每个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
 
-Driver: `pg8000` (pure Python; verified against openGauss-lite 5.0.3 for both
-`opengauss` and `gaussdb` connection types).
+驱动:`pg8000`(纯 Python;已对 openGauss-lite 5.0.3 的 `opengauss` 与 `gaussdb` 两种连接类型实证)。
