@@ -101,6 +101,9 @@ class GsqlBackend(Backend):
         self._run(full, vars_)
 
     def query_in_rollback(self, sql, params=None):
+        # 始终走文本旁路，返回形式为 ([], [(line,), ...])。
+        # 当前第一方消费者仅为 EXPLAIN ANALYZE 纯文本输出，不涉及行返回语句。
+        # 若将来有行返回语句走此路径，须注意其行形与 pg8000 的 (cols, rows) 不同。
         body, vars_ = gp.rewrite_params(sql, params or ())
         parts = ["BEGIN;"]
         prefix = self._prefix(read_only=False)  # 回滚路径不注入只读钉

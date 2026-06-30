@@ -58,7 +58,15 @@ _WRAPPABLE = frozenset({"SELECT", "WITH", "VALUES", "TABLE"})
 
 
 def is_wrappable_select(sql: str) -> bool:
-    """去掉前导空白/注释后，首关键字是否为可被 json_agg 包裹的查询。"""
+    """去掉前导空白/注释后，首关键字是否为可被 json_agg 包裹的查询。
+
+    首关键字不在 _WRAPPABLE 集合内（如 EXPLAIN、SHOW、INSERT、SET 等）时走
+    文本旁路（parse_text_result），返回逐行单元素 tuple 列表 [(line,), ...]。
+    注意：EXPLAIN (FORMAT JSON) 走文本旁路时，JSON 文档会被按行切成多个 tuple，
+    调用方须自行 "".join(r[0] for r in rows) + json.loads(...) 重组
+    （参见 skills/sqltune/scripts/cost.py 的处理方式）。新探针若用
+    EXPLAIN(FORMAT JSON) 必须同样处理，而非假设返回单个已解码对象。
+    """
     s = _LEADING_NOISE.sub("", sql, count=1).lstrip()
     if not s:
         return False

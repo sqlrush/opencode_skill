@@ -4,6 +4,10 @@ Skipped automatically when the connection isn't configured. Run with:
     python3 -m pytest tests/test_common_live.py -v
 or standalone:
     python3 tests/test_common_live.py
+
+All tests in this file are marked ``live`` so CI can exclude them with::
+
+    python3 -m pytest -m "not live" -q
 """
 import sys
 import pathlib
@@ -13,6 +17,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
 import common  # noqa: E402
+
+pytestmark = pytest.mark.live
 
 CONN = "og-pri"
 
