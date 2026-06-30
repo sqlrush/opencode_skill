@@ -62,16 +62,36 @@ pg8000 连接成功
 
 ## json_agg 类型保真与已知差异
 
-两个后端均通过 `json_agg` 包裹 SELECT 以统一类型读取，但仍存在以下已知差异：
+> **待验证（理论分析，未经 Linux + gsql 实证）**：本节基于两后端的代码路径推演，
+> 尚未在具备 gsql 二进制的真库上做过 parity diff，请勿当作已确认结论。
 
-| 类型 | gsql 后端 | pg8000 后端 |
+**关键洞察**：gsql 后端把可包裹的 SELECT 包成
+`SELECT json_agg(row_to_json(_t)) FROM (...) _t`，再用
+`json.loads(text, parse_float=Decimal)` 解析。这意味着——对 **JSON 原生标量类型**，
+gsql 解析出的 Python 值与 pg8000 返回的**完全一致**：
+
+| 数据库类型 | JSON 中间形态 | gsql 后端 Python 值 | pg8000 后端 Python 值 | 是否一致 |
+|---|---|---|---|---|
+| 整数（`int`/`bigint`） | JSON number（整数） | `int` | `int` | ✅ 一致 |
+| 数值/浮点（`numeric`/`float`/`double`） | JSON number（小数） | `Decimal`（`parse_float=Decimal`） | `Decimal` | ✅ 一致 |
+| 布尔（`bool`） | JSON `true`/`false` | `bool` | `bool` | ✅ 一致 |
+| `NULL` | JSON `null` | `None` | `None` | ✅ 一致 |
+
+**真正的残留差异**只出现在 **非 JSON 原生类型**——这些类型在 `row_to_json` 里被
+渲染成 ISO/文本字符串，于是经 gsql 解析后是 Python `str`，而 pg8000 返回的是带类型的对象：
+
+| 数据库类型 | gsql 后端 Python 值 | pg8000 后端 Python 值 |
 |---|---|---|
-| 时间戳（`timestamp`/`timestamptz`） | ISO 字符串，如 `"2024-01-01T12:00:00"` | `datetime` 对象（Python `datetime.datetime`） |
-| 数值（`numeric`/`decimal`） | 字符串（如 `"123.45"`） | `decimal.Decimal` 对象 |
-| 布尔 | `true`/`false` 字符串 | Python `bool`（`True`/`False`） |
-| `NULL` | `None` | `None` |
+| 时间戳（`timestamp`/`timestamptz`） | `str`（ISO 串，如 `"2024-01-01T12:00:00"`） | `datetime.datetime` 对象 |
+| 日期（`date`） | `str`（如 `"2024-01-01"`） | `datetime.date` 对象 |
+| 时间（`time`） | `str` | `datetime.time` 对象 |
+| 时间间隔（`interval`） | `str` | 类型化对象 |
+| 数组（`array`） | `list`（JSON 数组，元素再按上表规则） | 类型化 `list` |
+| 字节串（`bytea`） | `str`（文本表示） | `bytes` 对象 |
 
-各 skill 的探针 SQL 均设计为对这些差异**不敏感**（比较前统一转为字符串，或只使用数值大小而不依赖具体类型）。若新增探针，建议在 SQL 中显式用 `CAST` 转为 `text` 以消除差异。
+各 skill 的探针 SQL 均设计为对这些差异**不敏感**（比较前统一转为字符串，或只使用数值
+大小而不依赖具体类型）。若新增探针涉及时间戳/日期/数组/bytea 等非 JSON 原生类型，
+建议在 SQL 中显式 `CAST(... AS text)` 以消除差异。
 
 ---
 
@@ -139,10 +159,10 @@ DBError: password authentication failed for user "gaussdb"
 python3 skills/health/scripts/health.py --conn og-pri > /tmp/health.gsql.txt
 
 # 切换 driver
-# 临时改 config.yaml driver: pg8000，或：
-GDAA_GSQL=/dev/null python3 skills/health/scripts/health.py --conn og-pri > /tmp/health.pg.txt
+# 临时改 config.yaml driver: pg8000，或用一个不存在的路径强制 gsql 走 "binary not found" 分支兜底到 pg8000：
+GDAA_GSQL=/nonexistent/path python3 skills/health/scripts/health.py --conn og-pri > /tmp/health.pg.txt
 
 diff /tmp/health.gsql.txt /tmp/health.pg.txt || true
 ```
 
-**当前状态**：本机为 macOS，gsql 不可用，parity diff **延迟至具备 gsql 的 Linux 主机后再执行**。预期差异仅限上文「已知差异」表中的类型差异（时间戳/数值格式）；各 skill 已设计为对其不敏感，输出内容应完全一致。
+**当前状态**：本机为 macOS，gsql 不可用，parity diff **延迟至具备 gsql 的 Linux 主机后再执行**。预期差异仅限上文「已知差异」表中**非 JSON 原生类型**的差异（时间戳/日期/数组/bytea 的 `str` vs 类型化对象）；int/Decimal/bool/NULL 在两后端一致。各 skill 已设计为对其不敏感，输出内容应完全一致。
