@@ -1,6 +1,7 @@
 """gsql 协议层（纯函数，无 I/O）：参数注入、语句判别、结果与错误解析。"""
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any, Sequence
 
@@ -49,3 +50,22 @@ def rewrite_params(sql: str, params: Sequence[Any]) -> tuple[str, dict]:
             f"placeholder/param count mismatch: {idx} placeholders, {len(params)} params"
         )
     return "".join(out), vars_
+
+
+_LEADING_NOISE = re.compile(r"^\s*(--[^\n]*\n|/\*.*?\*/\s*)*", re.DOTALL)
+_WRAPPABLE = frozenset({"SELECT", "WITH", "VALUES", "TABLE"})
+
+
+def is_wrappable_select(sql: str) -> bool:
+    """去掉前导空白/注释后，首关键字是否为可被 json_agg 包裹的查询。"""
+    s = _LEADING_NOISE.sub("", sql, count=1).lstrip()
+    if not s:
+        return False
+    first = s.split(None, 1)[0].upper()
+    return first in _WRAPPABLE
+
+
+def wrap_select_json(sql: str) -> str:
+    """把 SELECT 包成单值 JSON：列序/类型/NULL 全保真。"""
+    inner = sql.strip().rstrip(";").strip()
+    return f"SELECT json_agg(row_to_json(_t)) FROM ({inner}) _t"

@@ -46,3 +46,23 @@ def test_count_mismatch_raises():
 def test_unsupported_type_raises():
     with pytest.raises(DBError):
         gp.rewrite_params("x=%s", [object()])
+
+def test_is_wrappable_true_for_select():
+    assert gp.is_wrappable_select("SELECT 1")
+    assert gp.is_wrappable_select("  select * from t")
+    assert gp.is_wrappable_select("WITH x AS (SELECT 1) SELECT * FROM x")
+
+def test_is_wrappable_strips_leading_comment():
+    assert gp.is_wrappable_select("-- c\nSELECT 1")
+    assert gp.is_wrappable_select("/* c */ SELECT 1")
+
+def test_is_wrappable_false_for_non_select():
+    assert not gp.is_wrappable_select("SHOW enable_wdr_snapshot")
+    assert not gp.is_wrappable_select("EXPLAIN ANALYZE SELECT 1")
+    assert not gp.is_wrappable_select("SET statement_timeout = 1000")
+
+def test_wrap_select_json_strips_trailing_semicolon():
+    assert (
+        gp.wrap_select_json("SELECT a FROM t;")
+        == "SELECT json_agg(row_to_json(_t)) FROM (SELECT a FROM t) _t"
+    )
