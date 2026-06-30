@@ -33,6 +33,17 @@ def test_open_pins_read_only(monkeypatch):
     b = pgb.Pg8000Backend.open(_conn(), "pw", read_only=True)
     # 只读钉：execute 过 SET ... READ ONLY
     assert fake.autocommit is True
+    # 强断言：最后真执行的语句就是只读钉 SQL（否则 autocommit 在钉之前
+    # 已被无条件置 True，断言会即便钉从未执行也误判通过）
+    assert fake._cur.last[0] == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+
+def test_open_skips_pin_when_not_read_only(monkeypatch):
+    fake = FakeConn()
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", lambda **kw: fake)
+    b = pgb.Pg8000Backend.open(_conn(), "pw", read_only=False)
+    # 非只读：不钉只读，cursor 从未被取用，故无任何 SQL 被执行
+    assert "cursor" not in fake.executed
+    assert not hasattr(fake._cur, "last")
 
 def test_query_returns_cols_and_rows(monkeypatch):
     fake = FakeConn(desc=[("a",), ("b",)], rows=[(1, "x")])
