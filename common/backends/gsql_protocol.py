@@ -1,6 +1,7 @@
 """gsql 协议层（纯函数，无 I/O）：参数注入、语句判别、结果与错误解析。"""
 from __future__ import annotations
 
+import json
 import re
 from decimal import Decimal
 from typing import Any, Sequence
@@ -69,3 +70,37 @@ def wrap_select_json(sql: str) -> str:
     """把 SELECT 包成单值 JSON：列序/类型/NULL 全保真。"""
     inner = sql.strip().rstrip(";").strip()
     return f"SELECT json_agg(row_to_json(_t)) FROM ({inner}) _t"
+
+
+_ERR_RE = re.compile(r"ERROR:\s+(?:([0-9A-Za-z]{5}):\s+)?(.*)")
+
+
+def parse_json_result(stdout: str) -> tuple[list[str], list[tuple]]:
+    """解析 json_agg 输出为 (cols, rows)；空集 → ([], [])。"""
+    text = stdout.strip()
+    if not text:
+        return [], []
+    data = json.loads(text, parse_float=Decimal)
+    if not data:                       # None 或空数组
+        return [], []
+    cols = list(data[0].keys())        # row_to_json 保列序，dict 保插入序
+    rows = [tuple(rec.get(c) for c in cols) for rec in data]
+    return cols, rows
+
+
+def parse_text_result(stdout: str) -> tuple[list[str], list[tuple]]:
+    """解析 -At 文本输出：每非尾空行 → 单元素 tuple（SHOW/EXPLAIN 用）。"""
+    text = stdout[:-1] if stdout.endswith("\n") else stdout
+    if text == "":
+        return [], []
+    return [], [(line,) for line in text.split("\n")]
+
+
+def parse_gsql_error(stderr: str) -> str:
+    """尽量还原 'ERROR: <msg> (SQLSTATE <code>)'，否则回退原文。"""
+    for line in stderr.splitlines():
+        m = _ERR_RE.search(line)
+        if m:
+            code, msg = m.group(1), m.group(2).strip()
+            return f"ERROR: {msg} (SQLSTATE {code})" if code else f"ERROR: {msg}"
+    return stderr.strip() or "gsql failed with no error output"

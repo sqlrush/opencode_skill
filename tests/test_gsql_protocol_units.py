@@ -66,3 +66,38 @@ def test_wrap_select_json_strips_trailing_semicolon():
         gp.wrap_select_json("SELECT a FROM t;")
         == "SELECT json_agg(row_to_json(_t)) FROM (SELECT a FROM t) _t"
     )
+
+def test_parse_json_recovers_types_and_null():
+    out = '[{"a": 1, "b": "x", "c": null}]\n'
+    cols, rows = gp.parse_json_result(out)
+    assert cols == ["a", "b", "c"]
+    assert rows == [(1, "x", None)]
+
+def test_parse_json_float_is_decimal():
+    cols, rows = gp.parse_json_result('[{"v": 1.5}]')
+    assert rows[0][0] == Decimal("1.5")
+    assert isinstance(rows[0][0], Decimal)
+
+def test_parse_json_empty_set():
+    assert gp.parse_json_result("\n") == ([], [])
+    assert gp.parse_json_result("") == ([], [])
+
+def test_parse_text_lines():
+    cols, rows = gp.parse_text_result("on\n")
+    assert cols == []
+    assert rows == [("on",)]
+    _, rows2 = gp.parse_text_result("line1\nline2\n")
+    assert rows2 == [("line1",), ("line2",)]
+
+def test_parse_text_empty():
+    assert gp.parse_text_result("") == ([], [])
+
+def test_parse_error_with_sqlstate():
+    err = "gsql: ERROR:  42P01: relation \"foo\" does not exist\n"
+    assert gp.parse_gsql_error(err) == 'ERROR: relation "foo" does not exist (SQLSTATE 42P01)'
+
+def test_parse_error_without_sqlstate():
+    assert gp.parse_gsql_error("gsql: ERROR:  boom\n") == "ERROR: boom"
+
+def test_parse_error_fallback():
+    assert gp.parse_gsql_error("could not connect to server") == "could not connect to server"
