@@ -29,7 +29,7 @@ python3 -m pip install -r requirements.txt
 
 完整步骤(前置依赖、建连接、验证、排障)见 [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md)。
 
-连接信息从 `~/.gdaa/config.yaml` + `~/.gdaa/credentials/` 读取(和 Go 版 `gdaa` 共用同一份存储),也可用 `GDAA_HOME` 改根目录。`GDAA_PASSWORD` 可临时覆盖存储的密码(一次性 / CI 用)。
+连接信息从 `~/.gdaa/config.yaml` + `~/.gdaa/credentials/` 读取(和 Go 版 `gdaa` 共用同一份存储),也可用 `GDAA_HOME` 改根目录。`GDAA_PASSWORD` 可临时覆盖存储的密码(一次性 / CI 用)。支持 gsql（默认）与 pg8000 双后端，连接级自动兜底；详见 [docs/connection-drivers.md](docs/connection-drivers.md)。
 
 ## 范围(当前)
 
@@ -56,4 +56,4 @@ SQL 优化族:
 
 每个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
 
-驱动:`pg8000`(纯 Python;已对 openGauss-lite 5.0.3 的 `opengauss` 与 `gaussdb` 两种连接类型实证)。
+驱动:gsql（默认）+ pg8000 双后端，连接级自动兜底（gsql 不可用时自动降为 pg8000）。pg8000 已对 openGauss-lite 5.0.3 的 `opengauss` 与 `gaussdb` 两种连接类型实证；gsql parity 待在 Linux 主机验证，见 [docs/connection-drivers.md](docs/connection-drivers.md)。
