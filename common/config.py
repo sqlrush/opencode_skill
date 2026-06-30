@@ -1,8 +1,9 @@
 """Named-connection config, compatible with gdaa's ~/.gdaa/config.yaml.
 
 Port of internal/config/config.go. Reuses the exact same on-disk layout so
-existing gdaa connections work unchanged. Override the base dir with GDAA_HOME.
-Passwords are never stored here — see credential.py.
+existing gdaa connections work unchanged. Override the base dir with GSDB_HOME
+(the legacy GDAA_HOME is still honored). Passwords are never stored here — see
+credential.py.
 """
 from __future__ import annotations
 
@@ -75,8 +76,13 @@ def validate(conn: Connection) -> None:
 
 
 def state_dir() -> pathlib.Path:
-    """Resolve the gdaa state directory path without creating it."""
-    base = os.environ.get("GDAA_HOME")
+    """Resolve the state directory path without creating it.
+
+    Location is set by GSDB_HOME (preferred), or the legacy GDAA_HOME (still
+    honored); defaults to ~/.gdaa when neither is set. The name/path is
+    user-chosen — the directory need not be called .gdaa.
+    """
+    base = os.environ.get("GSDB_HOME") or os.environ.get("GDAA_HOME")
     if base:
         return pathlib.Path(base)
     return pathlib.Path.home() / ".gdaa"

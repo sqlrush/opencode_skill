@@ -1,13 +1,13 @@
 """AES-256-GCM credential store, byte-compatible with gdaa.
 
 Port of internal/config/credential.go. Layout (under the state dir, default
-~/.gdaa, override with GDAA_HOME):
+~/.gdaa, override with GSDB_HOME — legacy GDAA_HOME still honored):
 
     key                       32-byte AES-256 key (0600), generated on first use
     credentials/<name>.enc    nonce(12) || GCM(ciphertext||tag), AAD = name
 
-The GDAA_PASSWORD environment variable, when set, overrides stored credentials
-(CI / one-off usage).
+The GSDB_PASSWORD environment variable (or legacy GDAA_PASSWORD), when set,
+overrides stored credentials (CI / one-off usage).
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def load_secret(name: str) -> str:
     if not name or not _NAME_RE.match(name):
         raise CredentialError(f"invalid credential name {name!r}")
 
-    env = os.environ.get("GDAA_PASSWORD")
+    env = os.environ.get("GSDB_PASSWORD") or os.environ.get("GDAA_PASSWORD")
     if env:
         return env
 
