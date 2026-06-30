@@ -4,13 +4,21 @@ Skipped automatically when the connection isn't configured. Run with:
     python3 -m pytest tests/test_common_live.py -v
 or standalone:
     python3 tests/test_common_live.py
+
+All tests in this file are marked ``live`` so CI can exclude them with::
+
+    python3 -m pytest -m "not live" -q
 """
 import sys
 import pathlib
+from dataclasses import replace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+import pytest  # noqa: E402
 import common  # noqa: E402
+
+pytestmark = pytest.mark.live
 
 CONN = "og-pri"
 
@@ -36,6 +44,25 @@ def test_credential_decrypts():
 
 def test_connect_and_read():
     db = common.Database.connect(CONN)
+    try:
+        ver = db.scalar("select version()")
+        assert "openGauss" in ver or "GaussDB" in ver
+        cols, rows = db.query("select 1 as a, 'x' as b")
+        assert cols == ["a", "b"]
+        assert rows == [(1, "x")]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("driver", ["gsql", "pg8000"])
+def test_connect_and_read_each_driver(driver):
+    if not _available():
+        pytest.skip(f"connection {CONN!r} not configured")
+    conn = replace(common.find(CONN), driver=driver)
+    try:
+        db = common.Database.open(conn, common.load_secret(CONN))
+    except common.DBError:
+        pytest.skip(f"driver {driver} unavailable on this host")
     try:
         ver = db.scalar("select version()")
         assert "openGauss" in ver or "GaussDB" in ver

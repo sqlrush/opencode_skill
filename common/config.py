@@ -21,6 +21,8 @@ _VALID_SSLMODES = frozenset(
 
 _VALID_TYPES = frozenset({"opengauss", "gaussdb"})
 
+_VALID_DRIVERS = frozenset({"gsql", "pg8000"})
+
 
 @dataclass(frozen=True)
 class Connection:
@@ -33,6 +35,7 @@ class Connection:
     database: str
     user: str
     sslmode: str = ""
+    driver: str = "gsql"
 
     def with_sslmode(self, sslmode: str) -> "Connection":
         """Return a new Connection with sslmode replaced (no mutation)."""
@@ -64,6 +67,10 @@ def validate(conn: Connection) -> None:
         raise ConfigError(
             f"sslmode {conn.sslmode!r}: must be one of "
             f"disable/allow/prefer/require/verify-ca/verify-full"
+        )
+    if conn.driver not in _VALID_DRIVERS:
+        raise ConfigError(
+            f"driver {conn.driver!r}: must be gsql or pg8000"
         )
 
 
@@ -111,6 +118,7 @@ def load() -> list[Connection]:
             database=item.get("database", ""),
             user=item.get("user", ""),
             sslmode=item.get("sslmode", "") or "",
+            driver=item.get("driver", "gsql") or "gsql",
         )
         validate(conn)
         conns.append(conn)
