@@ -14,13 +14,13 @@ def test_string_param_uses_quoted_var():
 
 def test_numeric_param_uses_raw_var():
     sql, vars_ = gp.rewrite_params("LIMIT %s", [100])
-    assert sql == "LIMIT :p1" or sql == "LIMIT :p0"
-    assert list(vars_.values()) == ["100"]
+    assert sql == "LIMIT :p0"
+    assert vars_ == {"p0": "100"}
 
 def test_decimal_param_preserved_as_text():
     sql, vars_ = gp.rewrite_params("x > %s", [Decimal("1.5")])
-    assert ":p0" in sql
-    assert vars_["p0"] == "1.5"
+    assert sql == "x > :p0"
+    assert vars_ == {"p0": "1.5"}
 
 def test_bool_and_none_inlined():
     sql, vars_ = gp.rewrite_params("a=%s AND b=%s", [True, None])
