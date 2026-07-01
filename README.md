@@ -27,7 +27,7 @@ python3 -m pip install -r requirements.txt
 ./install-opencode.sh          # → ~/.config/opencode/skills/
 ```
 
-完整步骤(前置依赖、建连接、验证、排障)见 [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md)。
+完整步骤(前置依赖、建连接、验证、排障)见 [docs/INSTALL-opencode.md](docs/INSTALL-opencode.md);**成套交付/上手文档**(安装部署、代码结构、编码规范、参与开发)见 [docs/delivery/](docs/delivery/README.md)。
 
 连接配置放在一个本地目录里,位置由环境变量 `GSDB_HOME` 指定(任意名/路径,默认 `~/.gdaa`,旧 `GDAA_HOME` 仍兼容):`$GSDB_HOME/config.yaml` + `$GSDB_HOME/credentials/`(和 Go 版 `gdaa` 共用同一份存储)。`GSDB_PASSWORD`(旧 `GDAA_PASSWORD` 仍兼容)可临时覆盖存储的密码(一次性 / CI 用)。支持 gsql（默认）与 pg8000 双后端，连接级自动兜底；详见 [docs/connection-drivers.md](docs/connection-drivers.md)。
 

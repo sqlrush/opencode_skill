@@ -1,5 +1,8 @@
 # 在 OpenCode 上装载这些 skill —— 操作手册
 
+> **更详细的从零安装部署版**(含系统前置、Docker 起测试库、逐字段配置、全 skill 参数速查)见
+> [docs/delivery/01-installation.md](delivery/01-installation.md)。本手册是精简操作版。
+
 本手册说明如何把 `opencode_skill` 的 10 个技能（slowsql / topsql / sqlfetch /
 explain / sqltune / proctune / procinfo / topproc / health / wdr）装到
 [OpenCode](https://opencode.ai) 并跑通。
