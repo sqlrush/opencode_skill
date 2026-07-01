@@ -60,9 +60,10 @@ pg8000 连接成功
 
 ---
 
-## ⚠️ 已知限制:gsql 不支持 hypopg 多语句验证(待修)
+## ⚠️ 限制:gsql 不支持 hypopg 多语句验证(已修:改为显式报错)
 
-> **Critical — 影响 sqltune/proctune verify 步骤，已知、待修，暂不修复。**
+> **原为 Critical（sqltune/proctune verify 步骤在真 gsql 下静默假负例）；现已修:
+> verify 入口在无持久会话的后端下会明确报错，不再静默。**
 
 **根因**：gsql 后端是「每查询一个 `gsql -c` 子进程」的无状态模型；会话级状态（GUC、
 hypopg 虚拟索引）**无法跨多次 `db.*` 调用存活**。
@@ -76,7 +77,12 @@ hypopg 虚拟索引）**无法跨多次 `db.*` 调用存活**。
 
 在**真 gsql** 下（Linux 主机，gsql 二进制可用），每步都是一个独立子进程，虚拟索引在
 下一个子进程里消失 → `EXPLAIN` 看不到虚拟索引 → `hypo_cost == orig_cost` →
-speedup ≈ 1.0 → **所有候选被静默否决、不报错**。这是一个静默的假负例，而非显式错误。
+speedup ≈ 1.0 → 所有候选会被否决。**修复前**这是一个静默的假负例。
+
+**已修（守卫）**：`Backend.provides_session`（pg8000=True / gsql=False）暴露后端是否
+提供持久会话；`sqltune` / `proctune` 的 `verify_indexes()` 入口检查 `db.provides_session`，
+无持久会话时**抛 `DBError` 明确报错**（不再静默返回 speedup≈1.0）。skill 的验证降级块会把
+该错误转成「索引验证不可用：…请用 driver: pg8000」的 note 展示给用户。
 
 **影响范围**：
 
@@ -95,9 +101,11 @@ connections:
     driver: pg8000   # 确保 hypopg verify 阶段使用持久连接
 ```
 
-**状态：待修（TODO）**。建议修法：给门面加 `require_session` 语义，让需要持久会话的
-入口（hypopg 多步验证）强制走 pg8000，或在 gsql 后端下清晰抛错（而非静默返回
-speedup≈1.0），防止误导用户认为「候选索引无效」。
+**状态：已修**（commit `6b3e811`）。采用「显式报错」方案：`verify_indexes` 在无持久
+会话的后端下抛 `DBError`，而非静默返回 speedup≈1.0。要在真 gsql 主机上实际跑 hypopg
+验证,请对该连接设 `driver: pg8000`。（备选的「自动钉 pg8000」方案未采用——显式报错更
+透明,不会在用户配了 gsql 时悄悄换后端。）后续 Linux+gsql 的 parity diff 仍建议包含
+`sqltune verify` / `proctune verify` 用例作回归。
 
 ---
 
