@@ -74,6 +74,11 @@ class Database:
     def close(self) -> None:
         self._backend.close()
 
+    @property
+    def provides_session(self) -> bool:
+        """底层后端是否提供跨语句持久会话(hypopg 索引验证依赖它)。"""
+        return self._backend.provides_session
+
     def __enter__(self) -> "Database":
         return self
 

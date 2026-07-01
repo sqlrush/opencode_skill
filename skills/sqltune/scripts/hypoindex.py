@@ -48,6 +48,13 @@ def verify_indexes(db, sql_text: str, min_speedup: float = MIN_SPEEDUP) -> list[
     (enable_hypo_index) and hypopg virtual indexes persist across statements —
     matching the Go pinned-connection contract.
     """
+    if not getattr(db, "provides_session", True):
+        from common.backends.base import DBError
+        raise DBError(
+            "hypopg 索引验证需要持久会话:gsql 每条语句起独立子进程,"
+            "会话级 GUC / hypopg 虚拟索引不跨语句留存,验证会失效。"
+            "请对该连接改用 driver: pg8000（gsql 后端不支持索引验证）。"
+        )
     if min_speedup < 1.0:
         min_speedup = 1.0
 

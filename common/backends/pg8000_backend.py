@@ -40,6 +40,7 @@ def _format_pg_error(exc: Exception) -> str:
 
 class Pg8000Backend(Backend):
     name = "pg8000"
+    provides_session = True  # 单条持久连接:会话级 GUC / hypopg 虚拟索引跨语句留存
 
     def __init__(self, raw: "pg8000.dbapi.Connection", conn: Any):
         self._raw = raw

@@ -19,6 +19,7 @@ CONNECT_TIMEOUT = 15  # 秒，对齐 pg8000
 
 class GsqlBackend(Backend):
     name = "gsql"
+    provides_session = False  # 每查询一个子进程:会话级状态/hypopg 虚拟索引不跨语句留存
 
     def __init__(self, conn: Any, password: str, binary: str,
                  read_only: bool = True):
