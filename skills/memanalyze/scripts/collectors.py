@@ -266,7 +266,25 @@ def collect_session(db, cat: Catalog, th: Thresholds, top: int) -> DimResult:
 # --------------------------------------------------------------------------
 # L6 — configuration sanity (no query: the GUCs are already in Capability)
 # --------------------------------------------------------------------------
-def collect_config(_db, cap: Capability, th: Thresholds, _top: int) -> DimResult:
+def _dynamic_ceiling_kb(gucs, mem) -> float:
+    """The dynamic-memory ceiling, in kB.
+
+    On openGauss `max_dynamic_memory` is NOT a GUC — it only shows up as a row
+    in gs_total_memory_detail (MB). Reading pg_settings alone made the overcommit
+    check silently never fire. Fall back through: GUC -> L1 view -> the process
+    ceiling, which is at least a real bound.
+    """
+    guc_kb = f(gucs.get("max_dynamic_memory", 0))
+    if guc_kb:
+        return guc_kb
+    view_mb = f((mem or {}).get("max_dynamic_memory", 0))
+    if view_mb:
+        return view_mb * 1024.0
+    return f(gucs.get("max_process_memory", 0))
+
+
+def collect_config(_db, cap: Capability, th: Thresholds, _top: int,
+                   mem: dict | None = None) -> DimResult:
     g = cap.gucs
     if not g:
         return degraded(DIM_CONFIG, "未能读取 pg_settings")
@@ -280,7 +298,7 @@ def collect_config(_db, cap: Capability, th: Thresholds, _top: int) -> DimResult
     # the instance is one concurrency spike away from OOM by configuration.
     work_mem_kb = f(g.get("work_mem", 0))
     max_conn = f(g.get("max_connections", 0))
-    max_dyn_kb = f(g.get("max_dynamic_memory", 0))
+    max_dyn_kb = _dynamic_ceiling_kb(g, mem)
     if work_mem_kb and max_conn and max_dyn_kb:
         worst_kb = work_mem_kb * max_conn
         ratio = worst_kb / max_dyn_kb

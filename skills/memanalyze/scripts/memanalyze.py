@@ -52,16 +52,25 @@ def _setup(db):
     return cat, capability.assess(capability.read_gucs(db), cat)
 
 
+def _instance_mem(db, cat) -> dict:
+    """L1 memory map, or {} — L6 needs max_dynamic_memory from here, not pg_settings."""
+    try:
+        return collectors.instance_memory(db, cat)
+    except common.DBError:
+        return {}
+
+
 def run_snapshot(db, conn: str, top: int) -> MemEvidence:
     th = default_thresholds()
     cat, cap = _setup(db)
+    mem = _instance_mem(db, cat)
     dims = [
         collectors.collect_instance(db, cat, th, top),
         collectors.collect_context(db, cat, th, top),
         collectors.collect_session(db, cat, th, top),
         wlm.collect_sql(db, cat, cap, th, top),
         wlm.collect_operator(db, cat, cap, th, top),
-        collectors.collect_config(db, cap, th, top),
+        collectors.collect_config(db, cap, th, top, mem=mem),
     ]
     return MemEvidence(
         conn=conn, target=f"实时快照（Top {top}）", mode="snapshot",
@@ -79,7 +88,7 @@ def run_history(db, conn: str, top: int) -> MemEvidence:
         degraded(DIM_SESSION, _HIST_NOTE),
         wlm.collect_sql(db, cat, cap, th, top, historical=True),
         wlm.collect_operator(db, cat, cap, th, top, historical=True),
-        collectors.collect_config(db, cap, th, top),
+        collectors.collect_config(db, cap, th, top, mem=_instance_mem(db, cat)),
     ]
     return MemEvidence(
         conn=conn, target=f"历史回溯（Top {top}）", mode="history",
@@ -111,7 +120,7 @@ def run_watch(db, conn: str, top: int, interval: int, count: int) -> MemEvidence
     dims = [
         collectors.collect_instance(db, cat, th, top),
         collectors.collect_session(db, cat, th, top),
-        collectors.collect_config(db, cap, th, top),
+        collectors.collect_config(db, cap, th, top, mem=_instance_mem(db, cat)),
     ]
     findings = [f for d in dims for f in d.findings]
     if tf is not None:

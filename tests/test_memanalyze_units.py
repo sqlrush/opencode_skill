@@ -303,6 +303,40 @@ def test_instance_degrades_on_query_failure():
 
 
 # --------------------------------------------------------------------------
+# collectors — L6 config
+#
+# Regression: on openGauss `max_dynamic_memory` is NOT a GUC — it only exists as
+# a row in gs_total_memory_detail. Reading it from pg_settings alone meant the
+# overcommit check silently never fired on a real instance.
+# --------------------------------------------------------------------------
+def _cap_with(gucs):
+    return capability.assess(gucs, _catalog())
+
+
+def test_config_overcommit_uses_the_instance_view_when_the_guc_is_absent():
+    cap = _cap_with({"work_mem": "65536", "max_connections": "500"})  # 64 MB x 500
+    mem = {"max_dynamic_memory": 10240.0}          # MB, straight from L1
+    d = collectors.collect_config(None, cap, TH, 10, mem=mem)
+    codes = [f.code for f in d.findings]
+    assert "MEM_CONFIG_OVERCOMMIT" in codes        # 32 GB theoretical vs 10 GB ceiling
+
+
+def test_config_overcommit_silent_when_within_the_ceiling():
+    cap = _cap_with({"work_mem": "16384", "max_connections": "200"})  # 16 MB x 200
+    mem = {"max_dynamic_memory": 4823.0}           # 3.2 GB theoretical < 4.7 GB
+    d = collectors.collect_config(None, cap, TH, 10, mem=mem)
+    assert [f for f in d.findings if f.code == "MEM_CONFIG_OVERCOMMIT"] == []
+
+
+def test_config_falls_back_to_max_process_memory():
+    """No max_dynamic_memory anywhere — max_process_memory is still a real ceiling."""
+    cap = _cap_with({"work_mem": "65536", "max_connections": "500",
+                     "max_process_memory": "1048576"})   # 1 GB
+    d = collectors.collect_config(None, cap, TH, 10, mem={})
+    assert "MEM_CONFIG_OVERCOMMIT" in [f.code for f in d.findings]
+
+
+# --------------------------------------------------------------------------
 # wlm — SQL and operator layers
 # --------------------------------------------------------------------------
 def test_operator_layer_degrades_with_the_capability_reason_not_an_empty_table():
@@ -435,3 +469,25 @@ def test_human_mb():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_sql_layer_explains_itself_when_the_view_is_present_but_empty():
+    """A ✓ capability line plus a blank table reads as 'no problems' — it is not."""
+    cap = capability.assess(
+        {"resource_track_level": "operator", "enable_resource_track": "on"},
+        _catalog(wlm_session="gs_wlm_session_statistics"))
+    d = wlm.collect_sql(_FakeDB(), _catalog(wlm_session="v"), cap, TH, 10)
+    assert d.available is True
+    assert d.rows == []
+    assert "resource_track_cost" in d.note
+    assert "history" in d.note              # points at the right next step
+
+
+def test_operator_layer_explains_itself_when_the_view_is_present_but_empty():
+    cap = capability.assess(
+        {"resource_track_level": "operator", "enable_resource_track": "on"},
+        _catalog(wlm_operator="gs_wlm_operator_statistics"))
+    d = wlm.collect_operator(_FakeDB(), _catalog(wlm_operator="v"), cap, TH, 10)
+    assert d.available is True
+    assert d.rows == []
+    assert "单机" in d.note                  # names the real openGauss limitation

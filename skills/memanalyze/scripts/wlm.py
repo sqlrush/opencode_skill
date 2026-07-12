@@ -27,6 +27,27 @@ _OP_COLS = ("queryid", "plan_node_id", "plan_node_name", "duration",
             "estimated_rows", "tuple_processed", "max_peak_memory",
             "max_spill_size", "memory_skew_percent", "warning")
 
+# A resolvable-but-empty WLM view is the trap this skill exists to avoid: the
+# capability line says ✓, the table renders blank, and it reads as "no operator
+# problems". Empirically, openGauss-lite 5.0.3 (single-node) never populates the
+# operator views at all, even with resource_track_level=operator — the feature
+# targets distributed GaussDB. Say that, rather than showing an innocent blank.
+_EMPTY_OPERATOR_NOTE = (
+    "视图存在且 resource_track_level=operator，但查不到任何算子记录。可能原因："
+    "(a) 采样窗口内没有代价超过 resource_track_cost 的作业；"
+    "(b) resource_track_duration 大于作业实际耗时（历史表只记录跑够该时长的作业）；"
+    "(c) **openGauss 单机版不填充算子级视图**——算子级资源跟踪主要面向分布式 GaussDB。"
+    "无论哪种，都不能据此认为「算子层没有问题」。"
+)
+
+_EMPTY_SQL_NOTE = (
+    "视图存在且资源跟踪已开启，但查不到作业记录。可能原因："
+    "(a) 采样窗口内没有代价超过 resource_track_cost 的作业；"
+    "(b) 实时视图只显示**正在运行**的作业——冲高已结束时请改用 history 子命令；"
+    "(c) 历史表受 resource_track_duration 约束，只记录跑够该时长的作业。"
+    "不能据此认为「没有大内存 SQL」。"
+)
+
 
 def _order_by(vi, preferred: str) -> str:
     """ORDER BY only on a column this view really has — otherwise the query
@@ -96,8 +117,11 @@ def collect_sql(db, cat: Catalog, cap: Capability, th: Thresholds, top: int,
                 trunc(warning, 60), "非空",
                 f"query_id {qid} 的 warning 字段：{trunc(warning, 120)}"))
 
-    d.headline = (f"峰值内存最高 SQL：query_id {d.rows[0][0]}（{d.rows[0][3]}）"
-                  if d.rows else "无 SQL 级内存数据")
+    if not d.rows:
+        d.headline = "视图可用，但无 SQL 级数据"
+        d.note = _EMPTY_SQL_NOTE
+    else:
+        d.headline = f"峰值内存最高 SQL：query_id {d.rows[0][0]}（{d.rows[0][3]}）"
     return d
 
 
@@ -164,6 +188,10 @@ def collect_operator(db, cat: Catalog, cap: Capability, th: Thresholds, top: int
                 f"{skew:.0f}%", f">={th.skew_warn_pct:.0f}%",
                 f"{where} 各 DN 内存分配倾斜 {skew:.0f}%，指向数据分布不均"))
 
-    d.headline = (f"峰值内存最高算子：{d.rows[0][2]}（{d.rows[0][6]}，query_id "
-                  f"{d.rows[0][0]}）" if d.rows else "无算子级内存数据")
+    if not d.rows:
+        d.headline = "视图可用，但无算子级数据"
+        d.note = _EMPTY_OPERATOR_NOTE
+    else:
+        d.headline = (f"峰值内存最高算子：{d.rows[0][2]}（{d.rows[0][6]}，query_id "
+                      f"{d.rows[0][0]}）")
     return d

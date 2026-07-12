@@ -63,6 +63,8 @@ def _dim_block(d) -> str:
         return "\n".join(out)
     if d.headline:
         out.append(d.headline + "\n")
+    if d.note:                      # a resolvable-but-empty layer must explain itself
+        out.append(f"> {d.note}\n")
     if d.headers and d.rows:
         out.append(render.table(d.headers, [[str(c) for c in r] for r in d.rows]))
     elif not d.rows:
