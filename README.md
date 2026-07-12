@@ -33,7 +33,7 @@ python3 -m pip install -r requirements.txt
 
 ## 范围(当前)
 
-已与 Go 版 `gdaa` 技能集**全量对齐** —— 3 个族、10 个 skill。
+已与 Go 版 `gdaa` 技能集**全量对齐**(3 个族、10 个 skill),并在其之上新增规范治理族。
 
 SQL 优化族:
 
@@ -54,6 +54,10 @@ SQL 优化族:
 - `skills/health`   —— 12 维只读健康检查 + 确定性发现
 - `skills/wdr`      —— WDR 快照 delta 解读(7 维,snaps/collect/render)
 
-每个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
+规范治理族(Go 版 `gdaa` 无对应实现):
+
+- `skills/sqlreview` —— SQL 规范审查。规范写在 [`skills/sqlreview/references/rules.yaml`](skills/sqlreview/references/rules.yaml),用户可自由编辑:确定性规则(表必须有主键、禁外键、表/索引/列命名、禁物理删除、禁前置模糊匹配、索引列数上限、索引冗余等)由脚本判定;表达不了的语义规则(`check: advisory`)由脚本取证后交模型判断。三个输入源:SQL 文本(`--file`/`--stdin`)、线上 SQL(`--sql-id`/`--top`)、库中存量表与索引(`--schema`)。无 SQL parser 依赖,自研轻量 lexer 保证注释与字符串字面量不误报。
+
+前 10 个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
 
 驱动:gsql（默认）+ pg8000 双后端，连接级自动兜底（gsql 不可用时自动降为 pg8000）。pg8000 已对 openGauss-lite 5.0.3 的 `opengauss` 与 `gaussdb` 两种连接类型实证；gsql parity 待在 Linux 主机验证，见 [docs/connection-drivers.md](docs/connection-drivers.md)。
