@@ -28,18 +28,22 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind = 'r' AND n.nspname = %s
 ORDER BY c.relname"""
 
-# indkey is an int2vector; string_to_array keeps this portable across
-# openGauss/GaussDB versions. Expression index columns (attnum 0) drop out.
+# indkey is an int2vector. openGauss is based on PostgreSQL 9.2, which has no
+# WITH ORDINALITY (9.4+) — expanding the vector with generate_series keeps the
+# column order without it. Expression index columns (attnum 0) drop out.
 _INDEXES_Q = """
 SELECT
   n.nspname::text                                              AS schema,
   t.relname::text                                              AS table,
   i.relname::text                                              AS name,
   COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ord)
-            FROM unnest(string_to_array(ix.indkey::text, ' '))
-                 WITH ORDINALITY AS k(attnum, ord)
+            FROM (SELECT s AS ord,
+                         (string_to_array(ix.indkey::text, ' '))[s]::smallint AS attnum
+                  FROM generate_series(
+                         1,
+                         array_length(string_to_array(ix.indkey::text, ' '), 1)) s) k
             JOIN pg_attribute a
-              ON a.attrelid = t.oid AND a.attnum = k.attnum::smallint),
+              ON a.attrelid = t.oid AND a.attnum = k.attnum),
            ARRAY[]::text[])                                    AS columns,
   ix.indisunique                                               AS is_unique,
   ix.indisprimary                                              AS is_primary,
