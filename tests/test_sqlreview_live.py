@@ -21,7 +21,16 @@ _SCRIPTS = _ROOT / "skills" / "sqlreview" / "scripts"
 CONN = os.environ.get("SQLREVIEW_LIVE_CONN", "og")
 
 
+# Several skills ship a module named `model` / `render`. Whichever test file ran
+# first leaves its own copy in sys.modules, and sqlreview's `from model import ...`
+# would then resolve against another skill's model. Drop them before loading ours
+# (same guard as tests/test_health_units.py).
+_SIBLINGS = ("model", "lexer", "rules", "checks", "objects", "report", "render")
+
+
 def _load(mod: str):
+    for name in _SIBLINGS:
+        sys.modules.pop(name, None)
     path = _SCRIPTS / f"{mod}.py"
     sys.path.insert(0, str(path.parent))
     sys.path.insert(0, str(_ROOT))
