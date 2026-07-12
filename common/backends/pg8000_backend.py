@@ -66,12 +66,23 @@ class Pg8000Backend(Backend):
 
         raw.autocommit = True
         b = cls(raw, conn)
+        # pg8000 applies `timeout` to the socket for the connection's whole life,
+        # not just the handshake — so a 15s cap would kill any query running
+        # longer than that, whatever server-side statement_timeout we set. Hand
+        # the handshake its bound, then let the server own the query deadline.
+        b._set_socket_timeout(None)
         if read_only:
             try:
                 b.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             except DBError:
                 b.execute("SET default_transaction_read_only = on")
         return b
+
+    def _set_socket_timeout(self, seconds) -> None:
+        """Retune the raw socket. `_usock` is pg8000-private: tolerate its absence."""
+        sock = getattr(self._raw, "_usock", None)
+        if sock is not None and hasattr(sock, "settimeout"):
+            sock.settimeout(seconds)
 
     def query(self, sql, params=None):
         cur = self._raw.cursor()
@@ -104,7 +115,12 @@ class Pg8000Backend(Backend):
                 self._raw.autocommit = prev
 
     def set_statement_timeout(self, seconds: int) -> None:
-        self.execute(f"SET statement_timeout = {int(seconds) * 1000}")
+        secs = int(seconds)
+        self.execute(f"SET statement_timeout = {secs * 1000}")
+        # The server owns the deadline; the socket is only a backstop, so give it
+        # strictly more room (mirrors GsqlBackend, which budgets
+        # CONNECT_TIMEOUT + statement_timeout for its subprocess). 0 = no limit.
+        self._set_socket_timeout(None if secs <= 0 else secs + CONNECT_TIMEOUT)
 
     def execute(self, sql, params=None) -> None:
         cur = self._raw.cursor()

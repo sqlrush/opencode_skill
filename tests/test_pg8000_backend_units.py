@@ -14,11 +14,18 @@ class FakeCursor:
     def fetchall(self): return self._rows
     def close(self): pass
 
+class FakeSock:
+    """Stands in for pg8000's raw socket (`Connection._usock`)."""
+    def __init__(self): self.timeout = pgb.CONNECT_TIMEOUT
+    def settimeout(self, t): self.timeout = t
+    def gettimeout(self): return self.timeout
+
 class FakeConn:
     def __init__(self, desc=None, rows=None):
         self.autocommit = False
         self._cur = FakeCursor(desc, rows or [])
         self.executed = []
+        self._usock = FakeSock()
     def cursor(self):
         self.executed.append("cursor")
         return self._cur
@@ -58,3 +65,58 @@ def test_open_connect_failure_raises_dberror(monkeypatch):
     monkeypatch.setattr(pgb.pg8000.dbapi, "connect", boom)
     with pytest.raises(DBError):
         pgb.Pg8000Backend.open(_conn(), "pw")
+
+
+# --- 客户端 socket 超时不得掐死长查询 ---------------------------------------
+# 回归：pg8000 的 connect(timeout=15) 会把 15s 设成整条连接的 socket 超时，
+# 于是任何跑超过 15s 的查询都在客户端被 socket.timeout 打断——无论
+# set_statement_timeout() 把服务端超时设成多少。实测在 openGauss 上，一条
+# 16s 的排序查询直接报 "timed out"，而我们明明设的是 60s。
+# 约定：握手仍受 CONNECT_TIMEOUT 约束；握手成功后交给服务端 statement_timeout，
+# 客户端 socket 只做兜底（服务端超时 + 握手余量）。
+
+def test_socket_timeout_is_released_after_connect(monkeypatch):
+    fake = FakeConn()
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", lambda **kw: fake)
+    pgb.Pg8000Backend.open(_conn(), "pw", read_only=True)
+    assert fake._usock.gettimeout() is None, \
+        "握手后 socket 仍是 15s 超时：长查询会被客户端掐断"
+
+
+def test_connect_still_bounded_by_connect_timeout(monkeypatch):
+    """握手本身必须有界，否则连不上的主机会挂死。"""
+    seen = {}
+    def fake_connect(**kw):
+        seen.update(kw)
+        return FakeConn()
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", fake_connect)
+    pgb.Pg8000Backend.open(_conn(), "pw")
+    assert seen["timeout"] == pgb.CONNECT_TIMEOUT
+
+
+def test_statement_timeout_also_bounds_the_socket(monkeypatch):
+    """服务端先超时，客户端 socket 兜底——不能反过来。"""
+    fake = FakeConn()
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", lambda **kw: fake)
+    b = pgb.Pg8000Backend.open(_conn(), "pw", read_only=False)
+    b.set_statement_timeout(60)
+    assert fake._cur.last[0] == "SET statement_timeout = 60000"
+    assert fake._usock.gettimeout() > 60, \
+        "socket 超时必须严格大于服务端 statement_timeout，否则客户端先掐"
+
+
+def test_zero_statement_timeout_leaves_socket_blocking(monkeypatch):
+    fake = FakeConn()
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", lambda **kw: fake)
+    b = pgb.Pg8000Backend.open(_conn(), "pw", read_only=False)
+    b.set_statement_timeout(0)
+    assert fake._usock.gettimeout() is None
+
+
+def test_missing_usock_attribute_does_not_crash(monkeypatch):
+    """pg8000 内部属性是私有的——换版本没了也不能炸。"""
+    fake = FakeConn()
+    del fake._usock
+    monkeypatch.setattr(pgb.pg8000.dbapi, "connect", lambda **kw: fake)
+    b = pgb.Pg8000Backend.open(_conn(), "pw", read_only=False)
+    b.set_statement_timeout(30)          # 不抛异常即可
