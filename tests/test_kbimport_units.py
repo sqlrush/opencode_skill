@@ -356,3 +356,70 @@ def test_contract_uses_a_placeholder_the_installer_substitutes():
     assert "{kbDir}" in _template()
     installer = (_ROOT / "install-opencode.sh").read_text(encoding="utf-8")
     assert "{kbDir}" in installer, "安装脚本没有替换 {kbDir}"
+
+
+# --------------------------------------------------------------------------
+# 编码：非 UTF-8 文件会被各 skill 的 grep 静默漏掉
+#
+# 消费者 skill 走的是契约块里的 `grep -rn "<关键词>" <kb>/...`。grep 拿 LLM 敲的
+# UTF-8 字节去比对一个 GB18030 文件,字节层面对不上——**不报错,就是"没找到"**。
+# 于是客户明明把规范写进了库里,模型却回「知识库未覆盖,以下为通用经验」,
+# 正是本 skill 要防的那种谎话。validate 必须在导入时就把它拦下来。
+# --------------------------------------------------------------------------
+_GBK_RULE = "- id: GS-IDX-001\n  severity: warn\n  check: deterministic\n  rule: 索引命名\n"
+_GBK_MD = "---\nid: G-1\ndescription: 中文指南\n---\n索引命名必须遵循前缀规范\n"
+
+
+@pytest.mark.parametrize("sub, name, body", [
+    ("guides", "gbk.md", _GBK_MD),
+    ("errata", "gbk.md", "索引命名的例外情况\n"),
+    ("rules", "gbk.yaml", _GBK_RULE),
+])
+def test_validate_rejects_non_utf8_files_in_searchable_dirs(tmp_path, sub, name, body):
+    d = _kb_dir(tmp_path)
+    (d / sub / name).write_bytes(body.encode("gb18030"))
+    findings = []
+    kb.validate_encoding(d, findings)
+    errors = [m for lvl, m in findings if lvl == "error"]
+    assert any(name in m for m in errors), f"{sub}/{name} 未被报为编码错误：{findings}"
+    assert any("UTF-8" in m for m in errors)
+    assert any("grep" in m for m in errors), "报错必须说清后果：grep 会静默漏掉它"
+
+
+def test_validate_accepts_utf8_files(tmp_path):
+    d = _kb_dir(tmp_path)
+    (d / "guides" / "ok.md").write_text(_GBK_MD, encoding="utf-8")
+    (d / "rules" / "ok.yaml").write_text(_GBK_RULE, encoding="utf-8")
+    findings = []
+    kb.validate_encoding(d, findings)
+    assert findings == []
+
+
+def test_original_snapshots_keep_their_encoding(tmp_path):
+    """sources/ 是原文快照,本来就该保留客户给的编码;检索也不扫它,不该报错。"""
+    d = _kb_dir(tmp_path)
+    (d / "sources" / "客户规范.txt").write_bytes("索引命名".encode("gb18030"))
+    findings = []
+    kb.validate_encoding(d, findings)
+    assert findings == []
+
+
+def test_cmd_validate_wires_in_the_encoding_check(tmp_path):
+    """端到端:validate 子命令必须真的跑这一项,退出码为 2。"""
+    d = _kb_dir(tmp_path)
+    (d / "guides" / "gbk.md").write_bytes(_GBK_MD.encode("gb18030"))
+    (d / "INDEX.md").write_text("# idx\n- `guides/gbk.md` — x\n", encoding="utf-8")
+    args = type("A", (), {"kb": str(d)})()
+    assert kb.cmd_validate(args) == 2
+
+
+def test_encoding_error_suggests_a_command_that_actually_runs(tmp_path):
+    """回归:原先建议 `iconv ... -o file` —— macOS/BSD 的 iconv 没有 -o,
+    而且原地覆写会先把文件截断成空。跑不通的修复建议比不给更糟。"""
+    d = _kb_dir(tmp_path)
+    (d / "guides" / "gbk.md").write_bytes(_GBK_MD.encode("gb18030"))
+    findings = []
+    kb.validate_encoding(d, findings)
+    msg = findings[0][1]
+    assert " -o " not in msg, "iconv -o 在 macOS/BSD 上不存在"
+    assert ">" in msg and "mv" in msg, "应给出可移植的重定向 + mv 写法"

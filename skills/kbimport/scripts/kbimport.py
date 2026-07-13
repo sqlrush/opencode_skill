@@ -8,7 +8,8 @@ entries. This script owns everything that must not depend on a model:
     ingest <file>       convert txt/md/docx/doc into <kb>/inbox/<slug>/source.md
                         (+ heading outline), snapshot the original into <kb>/sources/
     index               rebuild <kb>/INDEX.md from rules/*.yaml + guides/ + errata/
-    validate            check rule IDs, yaml schema, frontmatter, INDEX consistency
+    validate            check encoding (non-UTF-8 is invisible to the skills' grep),
+                        rule IDs, yaml schema, frontmatter, INDEX consistency
     search <keyword>    grep across errata/ rules/ guides/ (errata first)
     contract [--apply]  inject the KB-reference contract block into the judging skills
 
@@ -414,6 +415,40 @@ def validate_guides(kb: pathlib.Path, findings: list) -> None:
             seen[gid] = rel
 
 
+# Directories the consuming skills grep. sources/ is deliberately excluded: it
+# holds the customer's original files and should keep whatever encoding they came
+# in; nothing greps it.
+_SEARCHABLE = (("errata", (".md",)), ("rules", (".yaml", ".yml")), ("guides", (".md",)))
+
+
+def validate_encoding(kb: pathlib.Path, findings: list) -> None:
+    """Non-UTF-8 files in the searchable dirs are a silent trap.
+
+    The consuming skills locate clauses with `grep -rn "<关键词>" <kb>/...`, per the
+    contract block. grep compares the LLM's UTF-8 bytes against the file's bytes —
+    against a GB18030 file that simply does not match, and grep does not complain:
+    it just finds nothing. The model then answers「知识库未覆盖,以下为通用经验」
+    even though the customer's rule *is* in the KB — exactly the lie this skill
+    exists to prevent. Catch it at import time, loudly.
+
+    (kbimport's own `search` decodes gb18030 and would find the file, which is
+    what makes the failure so easy to miss during testing.)
+    """
+    for sub, suffixes in _SEARCHABLE:
+        for path in iter_files(kb, sub, suffixes):
+            try:
+                path.read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                findings.append((
+                    "error",
+                    f"{path.relative_to(kb)}: 不是 UTF-8 编码 —— 各 skill 用 "
+                    f"grep 检索知识库时会**静默漏掉**这个文件(不报错,只是搜不到),"
+                    f"导致模型误以为「知识库未覆盖」。请转存为 UTF-8:"
+                    f"`iconv -f gb18030 -t utf-8 {path.name} > {path.name}.utf8 "
+                    f"&& mv {path.name}.utf8 {path.name}`"
+                ))
+
+
 def validate_index(kb: pathlib.Path, findings: list) -> None:
     index = kb / "INDEX.md"
     if not index.is_file():
@@ -443,6 +478,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if not kb.is_dir():
         raise KbError(f"KB 目录不存在:{kb}")
     findings: list[tuple[str, str]] = []
+    validate_encoding(kb, findings)      # 先查编码:非 UTF-8 会被 grep 静默漏掉
     validate_rules(kb, findings)
     validate_guides(kb, findings)
     validate_index(kb, findings)
