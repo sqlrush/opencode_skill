@@ -33,7 +33,8 @@ python3 -m pip install -r requirements.txt
 
 ## 范围(当前)
 
-已与 Go 版 `gdaa` 技能集**全量对齐**(3 个族、10 个 skill),并在其之上新增 2 个 skill(规范治理 + 内存分析)。
+已与 Go 版 `gdaa` 技能集**全量对齐**(3 个族、10 个 skill),并在其之上新增 3 个 skill —— 共 **13 个**。
+新增的三个(sqlreview / memanalyze / kbimport)有专门的结构与使用文档:[docs/delivery/05-new-skills.md](docs/delivery/05-new-skills.md)。
 
 SQL 优化族:
 
@@ -60,6 +61,6 @@ SQL 优化族:
 - `skills/kbimport` —— 规范知识库导入与治理。把客户的规范文档(txt/md/docx/doc)条款化进 **与 skill 装在一起的知识库**(`<安装根>/kb/`,如全局安装即 `~/.config/opencode/kb/`;errata 修正 + rules 确定性条款 yaml + guides 语义指南 md),自动重建 INDEX、校验规则 ID 与 schema、关键词检索,并把知识库契约段幂等注入**做规范/阈值判断的 skill**(sqlreview/health/wdr/memanalyze/sqltune/proctune;纯取数的 slowsql/topsql/sqlfetch/explain/topproc/procinfo 不注入)。治理边界:**skill 自身 SKILL.md 与脚本的确定性判定 > 知识库 > 模型自带知识** —— 知识库管「规范条款说了什么」,不推翻 skill 的判定逻辑;两边不一致时并列呈现、交用户裁决。
 - `skills/sqlreview` —— SQL 规范审查。规范写在 [`skills/sqlreview/references/rules.yaml`](skills/sqlreview/references/rules.yaml),用户可自由编辑:确定性规则(表必须有主键、禁外键、表/索引/列命名、禁物理删除、禁前置模糊匹配、索引列数上限、索引冗余等)由脚本判定;表达不了的语义规则(`check: advisory`)由脚本取证后交模型判断。三个输入源:SQL 文本(`--file`/`--stdin`)、线上 SQL(`--sql-id`/`--top`)、库中存量表与索引(`--schema`)。无 SQL parser 依赖,自研轻量 lexer 保证注释与字符串字面量不误报。
 
-前 10 个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证(sqlreview / memanalyze 为本项目新增,无 Go 版对应实现)。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
+前 10 个 skill 的输出都对照 Go 版 `gdaa` 二进制做了交叉验证(sqlreview / memanalyze / kbimport 为本项目新增,无 Go 版对应实现)。health 与 wdr 做了逐字节 diff:维度、表头、阈值串、确定性发现完全一致(wdr 因快照不可变,证据数值完全相同;`wdr render` 除脚注里有意去掉「gdaa」一词外完全一致)。slowsql/topsql/sqlfetch 仅在末尾的 "Next:" 提示行不同——指向本地 Python 脚本而非 `gdaa`。
 
 驱动:gsql（默认）+ pg8000 双后端，连接级自动兜底（gsql 不可用时自动降为 pg8000）。pg8000 已对 openGauss-lite 5.0.3 的 `opengauss` 与 `gaussdb` 两种连接类型实证；gsql parity 待在 Linux 主机验证，见 [docs/connection-drivers.md](docs/connection-drivers.md)。

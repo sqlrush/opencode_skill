@@ -10,10 +10,15 @@ entries. This script owns everything that must not depend on a model:
     index               rebuild <kb>/INDEX.md from rules/*.yaml + guides/ + errata/
     validate            check rule IDs, yaml schema, frontmatter, INDEX consistency
     search <keyword>    grep across errata/ rules/ guides/ (errata first)
-    contract [--apply]  inject the KB-priority contract block into SKILL.md files
+    contract [--apply]  inject the KB-reference contract block into the judging skills
 
 KB directory resolution (first hit wins):
-    --kb DIR  >  $GSDB_KB_DIR  >  $GSDB_HOME/kb  >  ~/.gdaa/kb
+    --kb DIR  >  $GSDB_KB_DIR  >  <install root>/kb
+
+The KB sits *beside* the skills, never inside one — install-opencode.sh does
+`rm -rf` on each skill directory, so a KB under skills/<name>/ would be wiped on
+the next reinstall. Global install -> ~/.config/opencode/kb; project install ->
+<project>/.opencode/kb. The customer configures nothing.
 
 Exit codes: 0 = ok, 1 = runtime error, 2 = findings (validate errors, or
 contract scan showing missing/stale blocks). Findings go to stdout.
@@ -621,7 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--kb")
     p_search.set_defaults(func=cmd_search)
 
-    p_contract = sub.add_parser("contract", help="向各 SKILL.md 注入知识库最高优先级契约")
+    p_contract = sub.add_parser("contract", help="向做规范/阈值判断的 skill 注入知识库参考契约")
     p_contract.add_argument("--apply", action="store_true", help="实际写入(默认只扫描)")
     p_contract.add_argument("--skills-dir", help="skills 根目录(默认本 skill 的上级目录)")
     p_contract.set_defaults(func=cmd_contract)

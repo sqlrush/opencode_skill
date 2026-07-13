@@ -67,7 +67,7 @@ opencode_skill/
 │       ├── gsql_protocol.py  # gsql 协议纯函数层
 │       └── gsql_backend.py   # gsql 子进程后端
 │
-├── skills/                   # 10 个 skill（每个自包含）
+├── skills/                   # 13 个 skill（每个自包含）
 │   ├── slowsql/              # 慢 SQL 发现
 │   ├── topsql/               # 按资源消耗排名 SQL
 │   ├── sqlfetch/             # 按 SQL_ID 取完整 SQL 文本
