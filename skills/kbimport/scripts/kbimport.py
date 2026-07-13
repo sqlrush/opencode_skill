@@ -69,14 +69,33 @@ class KbError(Exception):
 
 # ---------------------------------------------------------------- kb layout
 
+def install_root(start: pathlib.Path | None = None) -> pathlib.Path:
+    """The directory the skills were installed into.
+
+        ~/.config/opencode/skills/kbimport/scripts/kbimport.py -> ~/.config/opencode
+        <项目>/.opencode/skills/.../kbimport.py                 -> <项目>/.opencode
+        <仓库>/skills/.../kbimport.py                           -> <仓库>
+    """
+    here = (start or _HERE).resolve()
+    for anc in here.parents:
+        if anc.name == "skills":
+            return anc.parent
+    return here.parent.parent.parent          # 非标准布局:退回三级
+
+
 def resolve_kb_dir(cli_value: str | None) -> pathlib.Path:
+    """--kb > $GSDB_KB_DIR > <安装根>/kb
+
+    The KB lives *next to* the skills, never inside one: install-opencode.sh
+    does `rm -rf` on each skill directory, so a KB under skills/<name>/ would be
+    destroyed on the next reinstall. A sibling of skills/ is never touched.
+    """
     if cli_value:
         return pathlib.Path(cli_value).expanduser()
     env_dir = os.environ.get("GSDB_KB_DIR")
     if env_dir:
         return pathlib.Path(env_dir).expanduser()
-    home = os.environ.get("GSDB_HOME") or os.environ.get("GDAA_HOME") or "~/.gdaa"
-    return pathlib.Path(home).expanduser() / "kb"
+    return install_root() / "kb"
 
 
 def ensure_kb_skeleton(kb: pathlib.Path) -> None:

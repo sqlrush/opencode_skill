@@ -298,3 +298,61 @@ def test_fetch_only_skills_stay_clean():
         md = _ROOT / "skills" / name / "SKILL.md"
         assert kb.CONTRACT_BEGIN not in md.read_text(encoding="utf-8"), \
             f"{name} 是纯取数 skill,不该被注入契约"
+
+
+# --------------------------------------------------------------------------
+# KB 落点：与 skill 装在一起（skills/ 的同级目录，不是 skill 目录内部）
+#
+# 不能放 skills/<name>/kb —— install-opencode.sh 每次重装 `rm -rf` 整个 skill
+# 目录，客户导入的知识库会被删光。同级目录 install 从不触碰(已实测)。
+# --------------------------------------------------------------------------
+import os
+
+
+@pytest.mark.parametrize("script, want_root", [
+    ("/Users/x/.config/opencode/skills/kbimport/scripts/kbimport.py",
+     "/Users/x/.config/opencode"),                      # 全局安装
+    ("/Users/x/proj/.opencode/skills/kbimport/scripts/kbimport.py",
+     "/Users/x/proj/.opencode"),                        # 项目安装
+    ("/Users/x/opencode_skill/skills/kbimport/scripts/kbimport.py",
+     "/Users/x/opencode_skill"),                        # 源码仓直跑
+])
+def test_install_root_is_derived_from_the_script_location(script, want_root):
+    assert kb.install_root(pathlib.Path(script)) == pathlib.Path(want_root)
+
+
+def test_kb_defaults_to_the_install_root(monkeypatch):
+    monkeypatch.delenv("GSDB_KB_DIR", raising=False)
+    monkeypatch.delenv("GSDB_HOME", raising=False)
+    monkeypatch.delenv("GDAA_HOME", raising=False)
+    assert kb.resolve_kb_dir(None) == kb.install_root() / "kb"
+
+
+def test_kb_dir_env_var_overrides_the_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("GSDB_KB_DIR", str(tmp_path / "custom"))
+    assert kb.resolve_kb_dir(None) == tmp_path / "custom"
+
+
+def test_explicit_kb_flag_beats_everything(monkeypatch, tmp_path):
+    monkeypatch.setenv("GSDB_KB_DIR", str(tmp_path / "env"))
+    assert kb.resolve_kb_dir(str(tmp_path / "cli")) == tmp_path / "cli"
+
+
+def test_kb_never_lands_inside_a_skill_directory(monkeypatch):
+    """The whole point: a reinstall must not be able to delete the KB."""
+    monkeypatch.delenv("GSDB_KB_DIR", raising=False)
+    parts = kb.resolve_kb_dir(None).parts
+    assert "skills" not in parts, "知识库落在 skills/ 内 —— 重装会被 rm -rf 删掉"
+
+
+def test_contract_points_skills_at_the_new_kb_location():
+    text = _template()
+    assert "~/.gdaa/kb" not in text, "契约块仍指向旧路径"
+    assert "kb" in text
+
+
+def test_contract_uses_a_placeholder_the_installer_substitutes():
+    """{kbDir} 必须被 install-opencode.sh 替换,否则装完 SKILL.md 里会留下字面量。"""
+    assert "{kbDir}" in _template()
+    installer = (_ROOT / "install-opencode.sh").read_text(encoding="utf-8")
+    assert "{kbDir}" in installer, "安装脚本没有替换 {kbDir}"

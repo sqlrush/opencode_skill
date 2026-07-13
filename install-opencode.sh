@@ -66,16 +66,20 @@ for d in "$SRC"/skills/*/; do
   echo "  → $name (v${ver:-?})"
   run "rm -rf \"$target\""
   run "cp -R \"$d\" \"$target\""
-  # Substitute the {baseDir} placeholder with the real install path.
+  # Substitute {baseDir} (this skill's install dir) and {kbDir} (the user
+  # knowledge base, a sibling of skills/ so a reinstall's rm -rf cannot eat it).
   if [ "$DRY" = 0 ]; then
     python3 - "$target" <<'PY'
 import pathlib, sys
-base = pathlib.Path(sys.argv[1])
+base = pathlib.Path(sys.argv[1])          # <root>/skills/<name>
+kbdir = base.parent.parent / "kb"         # <root>/kb  —— 与 skills/ 同级
 skill = base / "SKILL.md"
-skill.write_text(skill.read_text().replace("{baseDir}", str(base)))
+skill.write_text(
+    skill.read_text().replace("{baseDir}", str(base)).replace("{kbDir}", str(kbdir))
+)
 PY
   else
-    echo "  [dry-run] substitute {baseDir} -> $target in SKILL.md"
+    echo "  [dry-run] substitute {baseDir} -> $target, {kbDir} -> <root>/kb in SKILL.md"
   fi
   count=$((count + 1))
 done

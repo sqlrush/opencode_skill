@@ -29,7 +29,10 @@ metadata:
    产出:`<kb>/sources/` 原文快照、`<kb>/inbox/<slug>/source.md`(归一化文本)、
    `outline.md`(标题大纲)。`.doc` 旧格式转换失败时,把脚本给出的原因和
    「先另存为 .txt/.docx」的建议如实转告用户,**停下,不要自己猜内容**。
-   KB 位置:`$GSDB_KB_DIR` > `$GSDB_HOME/kb` > `~/.gdaa/kb`(脚本会打印实际路径)。
+   KB 位置:`--kb <目录>` > `$GSDB_KB_DIR` > **`<安装根>/kb`**(脚本会打印实际路径)。
+   `<安装根>` 从脚本自身位置推导,与 skill **装在一起**:全局安装 → `~/.config/opencode/kb/`,
+   项目安装 → `<项目>/.opencode/kb/`。**知识库在 `skills/` 的同级目录,不在 skill 目录内部**
+   ——install 每次重装会 `rm -rf` 整个 skill 目录,放里面会被删光。客户无需配任何环境变量。
 
 3. **条款化(你的核心工作)。** 先读 `{baseDir}/references/kb-layout.md`(格式与 ID 规范,
    必须遵守),再按 `outline.md` 分段读 `source.md`,逐条分类:
