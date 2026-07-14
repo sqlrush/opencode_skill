@@ -1,6 +1,6 @@
 ---
 name: kbimport
-version: 1.0.0
+version: 1.1.0
 description: "把客户的 GaussDB/OpenGauss 规范文档(txt/md/docx/doc)导入规范知识库:脚本负责格式转换、原文快照、INDEX 重建、规则 ID/schema 校验、全库检索、向做规范/阈值判断的 skill 注入知识库契约段(skill 自身策略仍高于知识库);你负责把条款分类成 rules(机器可判定 yaml)/ guides(语义指南 md)/ errata(修正)并起草入库。用户说「导入规范 / 建知识库 / 把 xxx.txt(doc) 加进规范 / 更新规范库 / 让 skill 按我们的规范来」即用。"
 allowed-tools: ["exec", "read", "write"]
 compatibility: opencode
@@ -42,11 +42,35 @@ metadata:
 
    硬性要求:每条带 `source` 指回原文小节;每条 rules 条款补 3-6 个 `keywords`
    同义词(客户用语 + 通用叫法 + 英文,让运行时字面检索能跨越叫法差异);
-   分配 ID 前先 `kbimport.py search GS-<域>-` 查最大号,**ID 永不复用**;条款超过 10 条时,
-   先给用户看「ID + 一句话 + 去向文件」清单,确认后再写入;原文模糊、前后矛盾的
-   条款单独列出问用户,**不要替客户定规范**。
+   分配 ID 前先 `kbimport.py search GS-<域>- --include-archived` 查最大号
+   (**必须带 `--include-archived`**,否则会漏掉已废止的号段而重复分配),**ID 永不复用**;
+   条款超过 10 条时,先给用户看「ID + 一句话 + 去向文件」清单,确认后再写入;
+   原文模糊、前后矛盾的条款单独列出问用户,**不要替客户定规范**。
 
-4. **写入。** 用 write 工具把草稿写进 `<kb>/rules|guides|errata/`,
+3b. **换版分支(ingest 打印了「⚠ 换版导入」时,这一步不可跳过)。**
+
+   知识库里已有条款,说明这是**规范升版**,不是首次导入。**先读 `<kb>/INDEX.md`**,
+   把新版原文与库里现有条款**逐条比对**,给用户一张表:
+   `ID | 一句话 | 新增 / 沿用 / 修改 / 废止`,**确认后**再动手:
+
+   - **新增** → 分配新 ID 写进 `rules/`;
+   - **修改** → 原地改 `rules/` 里那条(ID 不变,`source` 更新到新版小节);
+   - **废止** → **整条移进 `archive/<域>.yaml`**,补 `status: deprecated` 与
+     `superseded_by`,**绝不直接删除**;
+   - **沿用** → 不动。
+
+   最后手工递增 `<kb>/VERSION`。
+
+   **为什么废止必须移走而不是打标记**:各 skill 用 `grep -rn` 检索 `rules/`,而 grep
+   只输出**命中行**——一条留在 `rules/` 里仅标了 `status: deprecated` 的条款,模型搜
+   「外键」时看到的是 `rules/table.yaml:12: rule: 禁止使用外键约束`,**看不到 status 那行**,
+   照样会按已作废的规范判客户违规,且**不会有任何报错**。`archive/` 不在 grep 范围内,
+   物理隔离才拦得住。`validate` 会双向校验:标了没移、移了没标,都是 `[error]`。
+
+   **漏掉这一步的后果**:客户已经废止的规范继续被用来判违规,报告还煞有介事地引用
+   一份客户自己都作废了的原文出处。这是纯粹的静默失效,必须避免。
+
+4. **写入。** 用 write 工具把草稿写进 `<kb>/rules|guides|errata/`(废止的写进 `<kb>/archive/`),
    然后删除处理完的 `inbox/<slug>/`。
 
 5. **索引 + 校验(脚本)。**
@@ -57,8 +81,11 @@ metadata:
    ```
 
    validate 报 `[error]` 必须改到 0 才算导入完成;`[warn]` 逐条向用户说明。
+   校验项:文件编码、rule schema 与 ID 唯一性(跨 `rules/` 与 `archive/`)、
+   **废止条款的摆放位置**(标了没移 / 移了没标,都是 error)、guides frontmatter、
+   INDEX 一致性、inbox 是否还有未处理项。
 
-   **编码检查**:`rules/` `guides/` `errata/` 里的文件必须是 UTF-8。非 UTF-8(如 GBK)
+   **编码检查**:`rules/` `guides/` `errata/` `archive/` 里的文件必须是 UTF-8。非 UTF-8(如 GBK)
    会被各 skill 的 `grep` **静默漏掉**(不报错,只是搜不到),导致模型误以为「知识库未覆盖」
    而拿通用经验作答。validate 会报 `[error]` 并给出可直接执行的转码命令。
    (`sources/` 是原文快照,保留客户原编码,不检查。)
@@ -102,7 +129,10 @@ metadata:
 - `.doc` 旧格式依赖系统转换器(macOS textutil / antiword),都没有时只能请用户转格式。
   PDF 不支持,请用户先转文本。
 - 脚本的 search 是关键词匹配,不是语义检索;没命中不代表库里没有相关内容,
-  可换关键词或读 INDEX.md 后定向读文件。
+  可换关键词或读 INDEX.md 后定向读文件。search **不含已废止条款**(与各 skill 的
+  grep 范围一致);命中了已废止条款时它会提示条数,但不显示内容——废止条款**不得用于判定**。
+- 「哪条该废止」是**你**的语义比对,脚本判定不了。脚本只能确定性地告诉你
+  「这是换版导入,库里已有 N 条」,并在你标错位置(标了没移 / 移了没标)时报 error。
 
 ## 安全红线
 

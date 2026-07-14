@@ -423,3 +423,221 @@ def test_encoding_error_suggests_a_command_that_actually_runs(tmp_path):
     msg = findings[0][1]
     assert " -o " not in msg, "iconv -o 在 macOS/BSD 上不存在"
     assert ">" in msg and "mv" in msg, "应给出可移植的重定向 + mv 写法"
+
+
+# --------------------------------------------------------------------------
+# 换版治理:废止条款必须离开 rules/,否则各 skill 的 grep 仍会命中它
+#
+# 契约块(kb-contract.md)让各 skill 用
+#     grep -rn "<关键词>" <kb>/errata <kb>/rules <kb>/guides
+# 定位条款。grep -rn 只输出**命中行**,所以一条标了 status: deprecated 的条款,
+# 模型搜「外键」时看到的是 `rules/t.yaml:12: rule: 禁止使用外键约束` —— 它
+# 看不到 status 那一行,照样会按已废止的规范判客户违规。
+#
+# 所以废止必须是**物理隔离**:条款移进 archive/,而 archive/ 不在 grep 范围内。
+# status 字段的作用是让 validate 能双向校验「移了没标」和「标了没移」。
+# --------------------------------------------------------------------------
+def _write_archive(d: pathlib.Path, entries, name: str = "t.yaml") -> None:
+    import yaml
+    (d / "archive" / name).write_text(
+        yaml.safe_dump(entries, allow_unicode=True), encoding="utf-8")
+
+
+_DEPRECATED = dict(_GOOD, id="GS-TBL-002", rule="禁止使用外键约束",
+                   status="deprecated", superseded_by="V2.2 已废止,无替代条款")
+
+
+def test_archive_is_outside_the_grep_range_the_contract_gives_the_skills():
+    """整个设计的支点:契约块的 grep 范围必须**不含** archive/。
+
+    这条一旦破了(有人好心把 archive 加进 grep 列表),废止条款就会重新被各 skill
+    搜到,物理隔离失效,而且不会有任何别的测试报警。"""
+    contract = kb.load_contract_template()
+    grep_line = next(ln for ln in contract.splitlines() if "grep -rn" in ln)
+    assert "errata" in grep_line and "rules" in grep_line and "guides" in grep_line
+    assert "archive" not in grep_line, "archive/ 绝不能进 grep 范围,否则废止条款会复活"
+
+
+def test_archive_is_part_of_the_kb_skeleton(tmp_path):
+    d = _kb_dir(tmp_path)
+    assert (d / "archive").is_dir()
+
+
+def test_a_rule_without_status_is_active(tmp_path):
+    """向后兼容:存量条款没有 status 字段,必须一律视为现行有效,不得报错。"""
+    assert kb.rule_status(_GOOD) == "active"
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    findings = []
+    kb.validate_rules(d, findings)
+    assert [m for lvl, m in findings if lvl == "error"] == []
+
+
+def test_validate_rejects_a_deprecated_rule_left_in_rules_dir(tmp_path):
+    """核心:标了废止却没移走 —— 各 skill 的 grep 照样命中它,是静默失效。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_DEPRECATED])
+    findings = []
+    kb.validate_rules(d, findings)
+    errors = [m for lvl, m in findings if lvl == "error"]
+    assert any("archive" in m and "GS-TBL-002" in m for m in errors), errors
+
+
+def test_validate_rejects_an_active_rule_parked_in_archive(tmp_path):
+    """反向:移走了却没标废止 —— 一条现行条款被静默地移出了检索范围。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_GOOD])
+    findings = []
+    kb.validate_rules(d, findings)
+    errors = [m for lvl, m in findings if lvl == "error"]
+    assert any("deprecated" in m and "GS-IDX-001" in m for m in errors), errors
+
+
+def test_validate_rejects_an_unknown_status(tmp_path):
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [dict(_GOOD, status="retired")])
+    findings = []
+    kb.validate_rules(d, findings)
+    assert any("status" in m for lvl, m in findings if lvl == "error")
+
+
+def test_validate_warns_when_a_deprecated_rule_says_nothing_about_why(tmp_path):
+    d = _kb_dir(tmp_path)
+    entry = dict(_DEPRECATED)
+    del entry["superseded_by"]
+    _write_archive(d, [entry])
+    findings = []
+    kb.validate_rules(d, findings)
+    assert any("superseded_by" in m for lvl, m in findings if lvl == "warn")
+
+
+def test_rule_ids_stay_unique_across_rules_and_archive(tmp_path):
+    """ID 永不复用:废止一条之后,新条款不得占用它的 ID。跨目录查重才拦得住。
+
+    (只断言「拦住了」;报错该点谁的名、怎么措辞,由
+    test_reusing_an_archived_id_blames_the_new_rule_not_the_archived_one 管。)"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])
+    _write_rules(d, [dict(_GOOD, id="GS-TBL-002", rule="一条占用了废止 ID 的新条款")])
+    findings = []
+    kb.validate_rules(d, findings)
+    assert any("GS-TBL-002" in m for lvl, m in findings if lvl == "error")
+
+
+def test_search_does_not_reach_archived_rules(tmp_path, capsys):
+    """search 与 grep 必须口径一致:废止条款搜不到。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])
+    args = type("A", (), {"kb": str(d), "keyword": "外键", "include_archived": False})()
+    assert kb.cmd_search(args) == 0
+    out = capsys.readouterr().out
+    assert "禁止使用外键约束" not in out
+    assert "未命中" in out
+
+
+def test_search_can_reach_the_archive_when_explicitly_asked(tmp_path, capsys):
+    """人工排查换版历史时要能搜到,但必须显式要求,且结果标注已废止。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])
+    args = type("A", (), {"kb": str(d), "keyword": "外键", "include_archived": True})()
+    assert kb.cmd_search(args) == 0
+    out = capsys.readouterr().out
+    assert "禁止使用外键约束" in out
+    assert "已废止" in out
+
+
+def test_index_lists_archived_rules_but_marks_them_deprecated(tmp_path):
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _write_archive(d, [_DEPRECATED])
+    kb.cmd_index(type("A", (), {"kb": str(d)})())
+    index = (d / "INDEX.md").read_text(encoding="utf-8")
+    assert "GS-TBL-002" in index, "模型必须知道这条 ID 存在过(报告可追溯)"
+    assert "已废止" in index
+    assert "不得据此判定" in index, "光列出来不够,要说清它不能用来判违规"
+
+
+def test_validate_checks_the_encoding_of_archived_files(tmp_path):
+    """archive/ 虽不进 grep,但 validate 要解析它 —— 非 UTF-8 会让校验静默漏掉。"""
+    d = _kb_dir(tmp_path)
+    (d / "archive" / "old.yaml").write_bytes(
+        "- id: GS-TBL-002\n  rule: 禁止外键\n".encode("gb18030"))
+    findings = []
+    kb.validate_encoding(d, findings)
+    assert any("archive" in m for lvl, m in findings if lvl == "error")
+
+
+def test_ingest_flags_a_re_import_so_the_model_cannot_forget_to_reconcile(tmp_path):
+    """换版导入:库里已有条款时,ingest 必须喊出来。
+
+    脚本判定不了「哪条该废止」(语义活),但它能确定性地判定「这是第二次导入」,
+    并挡住『导完新版就忘了旧条款还在』这条静默失效路径。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    src = tmp_path / "spec-v2.md"
+    src.write_text("# 规范 V2\n\n索引名必须以 ix_ 开头。\n", encoding="utf-8")
+
+    out = subprocess.run(
+        [sys.executable, str(_SCRIPT), "ingest", str(src), "--kb", str(d)],
+        capture_output=True, text=True)
+    assert out.returncode == 0
+    assert "换版" in out.stdout
+    assert "1 条" in out.stdout, "要报出库里现有多少条款"
+    assert "archive" in out.stdout, "要指明废止条款该去哪"
+
+
+def test_search_does_not_claim_a_miss_when_it_just_showed_archived_hits(tmp_path, capsys):
+    """回归:--include-archived 打印了废止条款,却又跟一句「未命中」—— 自相矛盾。
+
+    「未命中」这句话是给模型的纪律(不得用自带知识冒充规范),它说的是**现行条款**
+    里没有。既然已经列出了废止条款,就该说清「现行条款未命中,上列已废止」,
+    而不是让读者在两句互相打架的话里自己猜。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])
+    args = type("A", (), {"kb": str(d), "keyword": "外键", "include_archived": True})()
+    kb.cmd_search(args)
+    out = capsys.readouterr().out
+    assert "禁止使用外键约束" in out
+    # 光秃秃的「未命中:'外键'(KB=...)」那一行不能出现——它跟上面刚列出的命中行打架。
+    # 「现行条款未命中」是另一回事:它说清了「现行的没有,上面那些是废止的」。
+    assert "未命中:'外键'(KB=" not in out, "已经列出命中行了,不能再甩一句光秃秃的未命中"
+    assert "现行条款未命中" in out and "已废止" in out
+
+
+def test_reusing_an_archived_id_blames_the_new_rule_not_the_archived_one(tmp_path):
+    """回归:报错指错了地方。
+
+    seen 先被 rules/ 填充,于是 archive/ 里那条**原版**条款被报成「重复」,而真正
+    违规的、复用了 ID 的新条款反倒成了被参照物。运维照着这条报错去改,会去动
+    archive/ —— 正好是反方向。历史是既成事实,该被点名的永远是新条款。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])                       # GS-TBL-002,已废止
+    _write_rules(d, [dict(_GOOD, id="GS-TBL-002", rule="一条占用了废止 ID 的新条款")])
+    findings = []
+    kb.validate_rules(d, findings)
+    errors = [m for lvl, m in findings if lvl == "error"]
+    blame = [m for m in errors if "GS-TBL-002" in m]
+    assert blame, errors
+    assert all(m.startswith("rules/") for m in blame), \
+        f"该被点名的是 rules/ 里的新条款,不是 archive/ 里的历史条款:{blame}"
+    assert any("废止" in m and "复用" in m for m in blame), \
+        f"报错要说清这是「复用了已废止的 ID」,而不是笼统的「重复」:{blame}"
+
+
+def test_validate_keeps_index_in_step_with_the_archive(tmp_path):
+    """index 会把 archive/ 写进 INDEX.md,validate 的一致性检查就必须跟着覆盖它 ——
+    否则删掉一个 archive 文件会在 INDEX 里留下悬空引用,而没人报错。"""
+    d = _kb_dir(tmp_path)
+    _write_archive(d, [_DEPRECATED])
+
+    findings = []                                  # ① archive 文件没进 INDEX
+    (d / "INDEX.md").write_text("# idx\n(空)\n", encoding="utf-8")
+    kb.validate_index(d, findings)
+    assert any("archive/t.yaml" in m for lvl, m in findings if lvl == "error"), findings
+
+    findings = []                                  # ② INDEX 引用了不存在的 archive 文件
+    (d / "INDEX.md").write_text(
+        "# idx\n- `archive/t.yaml` — 1 条\n- `archive/gone.yaml` — 1 条\n",
+        encoding="utf-8")
+    kb.validate_index(d, findings)
+    assert any("gone.yaml" in m for lvl, m in findings if lvl == "error"), findings

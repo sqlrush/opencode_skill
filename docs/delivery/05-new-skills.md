@@ -308,8 +308,9 @@ python3 {baseDir}/scripts/kbimport.py index
 # 4) 校验（脚本）：ID 格式/唯一性、schema、INDEX 一致性
 python3 {baseDir}/scripts/kbimport.py validate
 
-# 5) 检索（脚本）：errata > rules > guides 优先级
+# 5) 检索（脚本）：errata > rules > guides 优先级；不含已废止条款
 python3 {baseDir}/scripts/kbimport.py search 索引命名
+python3 {baseDir}/scripts/kbimport.py search 索引命名 --include-archived   # 人工追溯废止条款
 
 # 6) 契约注入（脚本）：让做判断的 skill 先查知识库
 python3 {baseDir}/scripts/kbimport.py contract            # 先扫描
@@ -338,9 +339,10 @@ python3 {baseDir}/scripts/kbimport.py contract --apply    # 确认后执行
 <kb>/
 ├── INDEX.md          脚本自动生成，勿手改（模型每次先读它选文件）
 ├── VERSION           版本号，如 2026.07
-├── rules/            机器可判定条款（yaml），稳定 GS-* ID
+├── rules/            机器可判定条款（yaml），稳定 GS-* ID —— 全部现行有效
 ├── guides/           语义指南（md，frontmatter 带 id/description）
 ├── errata/           修正与例外（md）—— 查询时优先级最高
+├── archive/          已废止条款（yaml）—— 不在检索范围内，仅供 ID 追溯
 ├── sources/          原文快照，只读，保证每条都能指回原文
 └── inbox/            待条款化的中转区，处理完要删掉
 ```
@@ -358,10 +360,40 @@ python3 {baseDir}/scripts/kbimport.py contract --apply    # 确认后执行
     ...
 ```
 
-`validate` 会校验：ID 格式与唯一性、必填字段、`severity`/`check` 枚举、guides 的
-frontmatter、INDEX 与实际文件的一致性、inbox 是否还有未处理项。
+`validate` 会校验：ID 格式与唯一性（**跨 `rules/` 与 `archive/`**）、必填字段、
+`severity`/`check`/`status` 枚举、废止条款的摆放位置、guides 的 frontmatter、
+INDEX 与实际文件的一致性、文件编码、inbox 是否还有未处理项。
 
-### 4.5 代码结构
+### 4.5 换版：废止一条条款是「移走」，不是「打标记」
+
+客户的规范升版时，`ingest` 检测到 `rules/` 非空会打印 **⚠ 换版导入**，提示模型必须先读
+`INDEX.md` 与现有条款逐条比对（新增 / 沿用 / 修改 / 废止）。
+
+**废止的条款要整条移进 `archive/`**，并补 `status: deprecated` 与 `superseded_by`——
+不是留在 `rules/` 里打个标记，更不是删掉。
+
+原因在 grep 的行为里：各 skill 按契约块用
+`grep -rn "<关键词>" <kb>/errata <kb>/rules <kb>/guides` 检索，而 **grep 只输出命中行**。
+一条留在 `rules/` 里、仅标了 `status: deprecated` 的条款，模型搜「外键」时看到的是
+`rules/table.yaml:12: rule: 禁止使用外键约束`，**看不到 status 那一行**，照样会按已作废的
+规范判客户违规——而且不会有任何报错。`archive/` **有意**不在那三个目录里，物理隔离才拦得住。
+
+不能删的原因：历史报告引用过 `GS-TBL-002`，删掉就再也查不到它当初说了什么。ID 永不复用。
+
+`validate` 对这件事**双向**把关，两个方向都是 `[error]`：
+
+| 错法 | 后果 | validate |
+|---|---|---|
+| 标了 `deprecated` 却留在 `rules/` | 各 skill 的 grep 照样命中，按废止规范判违规 | `[error]` 要求移到 `archive/` |
+| 移进了 `archive/` 却没标 `deprecated` | 一条现行条款被静默移出检索范围 | `[error]` 要求补标或移回 |
+| 新条款复用了废止的 ID | 历史报告的追溯指向另一条条款 | `[error]` 点名 `rules/` 里的**新**条款 |
+
+`search` 与 grep 口径一致（不含 `archive/`），但命中废止条款时会**报出条数**——这样换版
+漏处理时模型不会误以为「知识库没这条」。`--include-archived` 供人工追溯，输出标 `[已废止]`。
+
+存量兼容：没有 `status` 字段的条款一律视为 `active`。
+
+### 4.6 代码结构
 
 ```
 skills/kbimport/
@@ -370,13 +402,14 @@ skills/kbimport/
 │   ├── kb-contract.md    注入各 SKILL.md 的契约块模板（用户可编辑）
 │   └── kb-layout.md      条款格式与 ID 规范（模型条款化时必读）
 └── scripts/
-    └── kbimport.py  641 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
+    └── kbimport.py  836 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
 ```
 
-单文件，按职责分区：`kb layout`（路径解析/骨架）、`ingest`（格式转换）、
-`shared parsing`（frontmatter/yaml）、`index`、`validate`、`search`、`contract`、`main`。
+单文件，按职责分区：`kb layout`（路径解析/骨架）、`ingest`（格式转换 + 换版检测）、
+`shared parsing`（frontmatter/yaml、`rule_status`）、`index`、`validate`（编码 / schema /
+废止条款摆放位置 / INDEX 一致性）、`search`、`contract`、`main`。
 
-### 4.6 契约注入的安全性
+### 4.7 契约注入的安全性
 
 `contract --apply` 会**写别的 skill 的 SKILL.md**，所以有两条硬约束：
 
@@ -385,7 +418,7 @@ skills/kbimport/
    定位用**纯索引**（`block_span()`），不用正则——早期版本用 `BEGIN.*?END` 惰性匹配，
    遇到残缺标记会从孤立的 BEGIN 一路吃到末尾的 END，**把中间的正文一起删掉**。
 
-### 4.7 能力边界
+### 4.8 能力边界
 
 - 条款分类是**模型**的语义判断，不是脚本判定——写入前须经用户确认，且每条都要能指回原文。
 - `search` 是**关键词匹配，不是语义检索**；没命中不代表库里没有相关内容。
@@ -451,13 +484,13 @@ skills/kbimport/
 
 ## 6. 测试
 
-三个 skill 共 **120 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
+三个 skill 共 **143 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
 
 | 测试文件 | 用例 | 重点覆盖 |
 |---|---|---|
 | `tests/test_sqlreview_units.py` | 41 | lexer（注释/字面量/切句/行号）、rules 加载校验、每个 checker 的命中与不命中、report |
 | `tests/test_memanalyze_units.py` | 45 | probe 视图选择与列自适应、capability 的 GUC 判定、trend 泄漏/尖峰/平稳、会话关联、采集器降级、CLI 参数解析 |
-| `tests/test_kbimport_units.py` | 34 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导 |
+| `tests/test_kbimport_units.py` | 57 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导、**换版治理**（archive 物理隔离、双向摆放校验、ID 跨目录查重、search 与 grep 口径一致） |
 | `tests/test_sqlreview_live.py` | 2 | **方言 SQL 必须能在真库上跑通**——FakeDB 单测原理上抓不到方言语法错误 |
 
 跑法：
@@ -473,4 +506,4 @@ python3 -m pytest -q -m live          # 实机测试（无连接时自动 skip�
 
 ---
 
-*文档生成于 2026-07-13，对应 sqlreview 1.0.0 / memanalyze 1.0.0 / kbimport 1.0.0。*
+*文档更新于 2026-07-14，对应 sqlreview 1.0.0 / memanalyze 1.0.0 / kbimport 1.1.0（新增换版治理）。*

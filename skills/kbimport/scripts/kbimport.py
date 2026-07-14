@@ -9,9 +9,18 @@ entries. This script owns everything that must not depend on a model:
                         (+ heading outline), snapshot the original into <kb>/sources/
     index               rebuild <kb>/INDEX.md from rules/*.yaml + guides/ + errata/
     validate            check encoding (non-UTF-8 is invisible to the skills' grep),
-                        rule IDs, yaml schema, frontmatter, INDEX consistency
+                        rule IDs, yaml schema, frontmatter, INDEX consistency,
+                        and that withdrawn clauses actually left rules/
     search <keyword>    grep across errata/ rules/ guides/ (errata first)
     contract [--apply]  inject the KB-reference contract block into the judging skills
+
+Withdrawing a clause is a *move*, not a flag. The contract (references/kb-contract.md)
+sends the skills at the KB with `grep -rn <kw> <kb>/errata <kb>/rules <kb>/guides`, and
+grep prints only the matching *line* — a clause tagged `status: deprecated` still gets
+hit on its `rule:` line, and the model never sees the tag. So a withdrawn clause moves
+to <kb>/archive/, which is deliberately outside that grep range. `status` stays on the
+entry so validate can enforce both halves: tagged-but-not-moved, and moved-but-not-tagged.
+The ID is never deleted or reused — reports that cited it must stay traceable.
 
 KB directory resolution (first hit wins):
     --kb DIR  >  $GSDB_KB_DIR  >  <install root>/kb
@@ -44,11 +53,22 @@ except ImportError:  # pragma: no cover
 
 _HERE = pathlib.Path(__file__).resolve()
 
-KB_SUBDIRS = ("errata", "rules", "guides", "sources", "inbox")
+KB_SUBDIRS = ("errata", "rules", "guides", "archive", "sources", "inbox")
 RULE_ID_RE = re.compile(r"^GS-[A-Z]{2,4}-\d{3}$")
 SEVERITIES = frozenset({"error", "warn", "info"})
 CHECK_KINDS = frozenset({"deterministic", "advisory"})
 RULE_REQUIRED_FIELDS = ("id", "severity", "check", "rule")
+
+# A clause is either in force or withdrawn. Legacy clauses have no `status` field
+# at all, so its absence must mean active — see rule_status().
+STATUS_ACTIVE = "active"
+STATUS_DEPRECATED = "deprecated"
+STATUSES = frozenset({STATUS_ACTIVE, STATUS_DEPRECATED})
+# archive/ is scanned first on purpose: it is settled history, so when an ID
+# collides it is the *new* clause that must be blamed, not the withdrawn one it
+# collided with. Scan rules/ first and validate points the operator at archive/ —
+# the exact opposite of the file they need to fix.
+RULE_DIRS = ("archive", "rules")
 CONTRACT_BEGIN = "<!-- KB-CONTRACT:BEGIN"
 CONTRACT_END = "<!-- KB-CONTRACT:END -->"
 # 只有会做「规范判断 / 阈值判断」的 skill 才需要知识库契约。slowsql / topsql /
@@ -244,6 +264,22 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print(f"原始快照       : {snapshot.relative_to(kb)}")
     print(f"待条款化文本   : {(inbox / 'source.md').relative_to(kb)}({total_lines} 行)")
     print(f"标题大纲       : {(inbox / 'outline.md').relative_to(kb)}({len(outline)} 个候选标题)")
+
+    existing = sum(len(load_rule_file(p)[0])
+                   for p in iter_files(kb, "rules", (".yaml", ".yml")))
+    if existing:
+        # The script cannot tell which clauses the new edition dropped — that is a
+        # semantic diff. What it *can* do deterministically is refuse to let a
+        # re-import look like a first import, which is how stale clauses survive.
+        print()
+        print(f"⚠ 换版导入:知识库里已有 {existing} 条现行条款。")
+        print("  条款化前必须先读 INDEX.md,把新版原文与现有条款逐条比对:"
+              "新增 / 沿用 / 修改 / 废止。")
+        print("  废止的条款移进 archive/ 并标 status: deprecated —— **不要直接删除**"
+              "(ID 需永远可追溯,且永不复用)。")
+        print("  漏掉这一步,各 skill 会继续按已废止的规范判客户违规,而 validate 查不出来。")
+        print()
+
     print("Next: 按 SKILL.md 工作流分段阅读 source.md,把条款分类写入 rules/ guides/ errata/,"
           "然后运行 index 与 validate。")
     return 0
@@ -279,6 +315,16 @@ def load_rule_file(path: pathlib.Path) -> tuple[list, str | None]:
     if not isinstance(data, list):
         return [], "顶层必须是条款列表(yaml list)"
     return data, None
+
+
+def rule_status(entry: dict) -> str:
+    """`active` unless the entry says otherwise.
+
+    Legacy clauses were written before the field existed; treating a missing
+    `status` as anything but active would retroactively withdraw the whole
+    existing knowledge base.
+    """
+    return str(entry.get("status") or STATUS_ACTIVE).strip().lower()
 
 
 def iter_files(kb: pathlib.Path, sub: str, suffixes: tuple[str, ...]) -> list[pathlib.Path]:
@@ -330,13 +376,16 @@ def cmd_index(args: argparse.Namespace) -> int:
     errata = iter_files(kb, "errata", (".md",))
     rules = iter_files(kb, "rules", (".yaml", ".yml"))
     guides = iter_files(kb, "guides", (".md",))
+    archive = iter_files(kb, "archive", (".yaml", ".yml"))
     rule_total = sum(len(load_rule_file(p)[0]) for p in rules)
+    archive_total = sum(len(load_rule_file(p)[0]) for p in archive)
 
     lines = [
         "# 规范知识库索引(INDEX)",
         "",
         f"> 由 `kbimport.py index` 自动生成,勿手工编辑。版本 {read_version(kb)} · "
-        f"勘误 {len(errata)} 篇 · 条款 {rule_total} 条 · 指南 {len(guides)} 篇。",
+        f"勘误 {len(errata)} 篇 · 条款 {rule_total} 条 · 指南 {len(guides)} 篇 · "
+        f"已废止 {archive_total} 条。",
         "> 查询优先级:errata/ > rules/ > guides/ > 模型自带知识。",
         "",
         "## errata/(修正与例外 —— 最高优先级)",
@@ -347,7 +396,17 @@ def cmd_index(args: argparse.Namespace) -> int:
     lines += [f"- `rules/{p.relative_to(kb / 'rules')}` — {describe_rule_file(p)}" for p in rules] or ["(暂无)"]
     lines += ["", "## guides/(语义指南,模型判断依据)", ""]
     lines += [f"- `guides/{p.relative_to(kb / 'guides')}` — {first_heading(p)}" for p in guides] or ["(暂无)"]
-    lines += ["", "定位方式:先按本索引选文件,再 `grep -rn \"<关键词>\" <kb>/{errata,rules,guides}/`。", ""]
+    lines += [
+        "",
+        "## archive/(已废止条款 —— 仅供追溯,**不得据此判定**)",
+        "",
+        "> 这些条款已被客户的新版规范废止,**不在检索范围内**,也不得用来认定任何违规。",
+        "> 列在这里只为一件事:历史报告引用过这些 ID,ID 必须永远可追溯、且永不复用。",
+        "",
+    ]
+    lines += [f"- `archive/{p.relative_to(kb / 'archive')}` — {describe_rule_file(p)}" for p in archive] or ["(暂无)"]
+    lines += ["", "定位方式:先按本索引选文件,再 `grep -rn \"<关键词>\" <kb>/{errata,rules,guides}/`"
+              "(archive/ 不在其中,是有意为之)。", ""]
 
     (kb / "INDEX.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"INDEX.md 已重建:{kb / 'INDEX.md'}({len(lines)} 行)")
@@ -356,37 +415,84 @@ def cmd_index(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- validate
 
+def _duplicate_id_msg(where: str, rid: str, first_seen: str) -> str:
+    """Name the offender, and say which kind of collision it is."""
+    if first_seen.startswith("archive/"):
+        return (f"{where}: ID `{rid}` 复用了 archive/ 中**已废止**条款的 ID"
+                f"({first_seen})—— ID 永不复用:历史报告引用过它,复用会让追溯指向"
+                f"一条完全不同的条款。请分配新号。")
+    return f"{where}: ID `{rid}` 与 {first_seen} 重复"
+
+
+def _validate_placement(where: str, rid: str, sub: str, entry: dict,
+                        findings: list) -> None:
+    """A withdrawn clause must be in archive/, and archive/ must hold only those.
+
+    Both halves are silent failures if unchecked. Tagged-but-not-moved: the skills
+    grep rules/ and keep hitting the clause's `rule:` line, never seeing the tag —
+    they go on judging the customer against a spec that was withdrawn. The reverse,
+    moved-but-not-tagged, quietly drops a clause that is still in force out of the
+    searchable range. Neither shows up as an error anywhere else.
+    """
+    status = rule_status(entry)
+    if status not in STATUSES:
+        findings.append((
+            "error",
+            f"{where}: status `{entry.get('status')}` 非法,必须是 {sorted(STATUSES)}"))
+        return
+
+    if sub == "rules" and status == STATUS_DEPRECATED:
+        findings.append((
+            "error",
+            f"{where}: 条款 `{rid}` 标了 status: deprecated 却仍留在 rules/ —— "
+            f"各 skill 用 `grep -rn` 检索 rules/,只看得到命中行、看不到 status,"
+            f"**照样会命中它**并按已废止的规范判定。请移到 archive/(ID 保留,不要删除)"))
+    elif sub == "archive" and status != STATUS_DEPRECATED:
+        findings.append((
+            "error",
+            f"{where}: 条款 `{rid}` 放在 archive/ 却不是 status: deprecated —— "
+            f"archive/ 不在检索范围内,一条现行条款搁在这里等于被静默弃用。"
+            f"要么补 status: deprecated,要么移回 rules/"))
+    elif sub == "archive" and not entry.get("superseded_by"):
+        findings.append((
+            "warn",
+            f"{where}: 废止条款建议填写 superseded_by(被哪条取代,或为何废止),"
+            f"否则日后无法追溯当初为什么下架"))
+
+
 def validate_rules(kb: pathlib.Path, findings: list) -> None:
     seen: dict[str, str] = {}
-    for path in iter_files(kb, "rules", (".yaml", ".yml")):
-        rel = path.relative_to(kb)
-        entries, err = load_rule_file(path)
-        if err:
-            findings.append(("error", f"{rel}: {err}"))
-            continue
-        for i, entry in enumerate(entries):
-            where = f"{rel}[{i}]"
-            if not isinstance(entry, dict):
-                findings.append(("error", f"{where}: 条款必须是键值映射"))
+    for sub in RULE_DIRS:                    # ID 唯一性必须跨目录:废止的 ID 也不得复用
+        for path in iter_files(kb, sub, (".yaml", ".yml")):
+            rel = path.relative_to(kb)
+            entries, err = load_rule_file(path)
+            if err:
+                findings.append(("error", f"{rel}: {err}"))
                 continue
-            missing = [f for f in RULE_REQUIRED_FIELDS if not entry.get(f)]
-            if missing:
-                findings.append(("error", f"{where}: 缺少必填字段 {missing}"))
-            rid = str(entry.get("id", ""))
-            if rid and not RULE_ID_RE.match(rid):
-                findings.append(("error", f"{where}: ID `{rid}` 不符合 GS-<域>-NNN 格式"))
-            if rid in seen:
-                findings.append(("error", f"{where}: ID `{rid}` 与 {seen[rid]} 重复"))
-            elif rid:
-                seen[rid] = str(where)
-            if entry.get("severity") not in SEVERITIES:
-                findings.append(("error", f"{where}: severity 必须是 {sorted(SEVERITIES)}"))
-            if entry.get("check") not in CHECK_KINDS:
-                findings.append(("error", f"{where}: check 必须是 {sorted(CHECK_KINDS)}"))
-            if entry.get("check") == "advisory" and not entry.get("criteria"):
-                findings.append(("warn", f"{where}: advisory 条款建议提供 criteria(判定依据)"))
-            if not entry.get("source"):
-                findings.append(("warn", f"{where}: 建议填写 source(原文出处),保证可追溯"))
+            for i, entry in enumerate(entries):
+                where = f"{rel}[{i}]"
+                if not isinstance(entry, dict):
+                    findings.append(("error", f"{where}: 条款必须是键值映射"))
+                    continue
+                missing = [f for f in RULE_REQUIRED_FIELDS if not entry.get(f)]
+                if missing:
+                    findings.append(("error", f"{where}: 缺少必填字段 {missing}"))
+                rid = str(entry.get("id", ""))
+                if rid and not RULE_ID_RE.match(rid):
+                    findings.append(("error", f"{where}: ID `{rid}` 不符合 GS-<域>-NNN 格式"))
+                if rid in seen:
+                    findings.append(("error", _duplicate_id_msg(where, rid, seen[rid])))
+                elif rid:
+                    seen[rid] = str(where)
+                if entry.get("severity") not in SEVERITIES:
+                    findings.append(("error", f"{where}: severity 必须是 {sorted(SEVERITIES)}"))
+                if entry.get("check") not in CHECK_KINDS:
+                    findings.append(("error", f"{where}: check 必须是 {sorted(CHECK_KINDS)}"))
+                if entry.get("check") == "advisory" and not entry.get("criteria"):
+                    findings.append(("warn", f"{where}: advisory 条款建议提供 criteria(判定依据)"))
+                if not entry.get("source"):
+                    findings.append(("warn", f"{where}: 建议填写 source(原文出处),保证可追溯"))
+                _validate_placement(where, rid, sub, entry, findings)
 
 
 def validate_guides(kb: pathlib.Path, findings: list) -> None:
@@ -415,10 +521,16 @@ def validate_guides(kb: pathlib.Path, findings: list) -> None:
             seen[gid] = rel
 
 
-# Directories the consuming skills grep. sources/ is deliberately excluded: it
-# holds the customer's original files and should keep whatever encoding they came
-# in; nothing greps it.
+# Directories the consuming skills grep. MUST stay in step with the grep range in
+# references/kb-contract.md. archive/ is absent on purpose — that omission is the
+# entire mechanism by which a withdrawn clause stops reaching the skills.
+# sources/ is excluded too: it holds the customer's original files and keeps
+# whatever encoding they arrived in; nothing greps it.
 _SEARCHABLE = (("errata", (".md",)), ("rules", (".yaml", ".yml")), ("guides", (".md",)))
+
+# archive/ is out of the grep range but validate still parses it, so it has to be
+# UTF-8 like the rest — a GB18030 archive file would make ID-reuse checks miss it.
+_ENCODED = _SEARCHABLE + (("archive", (".yaml", ".yml")),)
 
 
 def validate_encoding(kb: pathlib.Path, findings: list) -> None:
@@ -434,7 +546,7 @@ def validate_encoding(kb: pathlib.Path, findings: list) -> None:
     (kbimport's own `search` decodes gb18030 and would find the file, which is
     what makes the failure so easy to miss during testing.)
     """
-    for sub, suffixes in _SEARCHABLE:
+    for sub, suffixes in _ENCODED:
         for path in iter_files(kb, sub, suffixes):
             try:
                 path.read_bytes().decode("utf-8")
@@ -455,10 +567,14 @@ def validate_index(kb: pathlib.Path, findings: list) -> None:
         findings.append(("error", "INDEX.md 不存在(运行 kbimport.py index)"))
         return
     index_text = read_text_file(index)
+    # archive/ is indexed too (its IDs must stay traceable), so it is checked here
+    # as well — otherwise deleting an archived file leaves a dangling INDEX entry
+    # that nothing complains about.
     kb_files = (
         iter_files(kb, "errata", (".md",))
         + iter_files(kb, "rules", (".yaml", ".yml"))
         + iter_files(kb, "guides", (".md",))
+        + iter_files(kb, "archive", (".yaml", ".yml"))
     )
     newest = 0.0
     for path in kb_files:
@@ -466,7 +582,7 @@ def validate_index(kb: pathlib.Path, findings: list) -> None:
         newest = max(newest, path.stat().st_mtime)
         if rel not in index_text:
             findings.append(("error", f"INDEX.md 缺少条目:{rel}(重新运行 index)"))
-    for rel in re.findall(r"`((?:errata|rules|guides)/[^`]+)`", index_text):
+    for rel in re.findall(r"`((?:errata|rules|guides|archive)/[^`]+)`", index_text):
         if not (kb / rel).is_file():
             findings.append(("error", f"INDEX.md 引用了不存在的文件:{rel}"))
     if kb_files and index.stat().st_mtime < newest:
@@ -498,28 +614,64 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- search
 
+def _grep_file(path: pathlib.Path, kb: pathlib.Path, needle: str,
+               prefix: str = "") -> list[str]:
+    """Literal, case-insensitive line matches — the same thing the skills' grep does."""
+    try:
+        content = read_text_file(path)
+    except OSError as exc:
+        print(f"{path.relative_to(kb)}: 读取失败:{exc}", file=sys.stderr)
+        return []
+    return [f"{prefix}{path.relative_to(kb)}:{lineno}: {line.strip()}"
+            for lineno, line in enumerate(content.splitlines(), 1)
+            if needle in line.lower()]
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     kb = resolve_kb_dir(args.kb)
     if not kb.is_dir():
         raise KbError(f"KB 目录不存在:{kb}")
     needle = args.keyword.lower()
-    hits = 0
-    for sub, suffixes in (("errata", (".md",)), ("rules", (".yaml", ".yml")), ("guides", (".md",))):
+
+    # Mirrors the skills' grep range exactly — archive/ is not in it.
+    hits: list[str] = []
+    for sub, suffixes in _SEARCHABLE:
         for path in iter_files(kb, sub, suffixes):
-            try:
-                content = read_text_file(path)
-            except OSError as exc:
-                print(f"{path.relative_to(kb)}: 读取失败:{exc}", file=sys.stderr)
-                continue
-            for lineno, line in enumerate(content.splitlines(), 1):
-                if needle in line.lower():
-                    print(f"{path.relative_to(kb)}:{lineno}: {line.strip()}")
-                    hits += 1
-                    if hits >= SEARCH_HIT_CAP:
-                        print(f"(命中超过 {SEARCH_HIT_CAP} 条,已截断——换更具体的关键词)")
-                        return 0
-    if hits == 0:
-        print(f"未命中:'{args.keyword}'(KB={kb})。知识库未覆盖时必须如实说明,不得用自带知识冒充规范。")
+            hits += _grep_file(path, kb, needle)
+
+    archived = [h for p in iter_files(kb, "archive", (".yaml", ".yml"))
+                for h in _grep_file(p, kb, needle, prefix="[已废止] ")]
+
+    with_archive = bool(getattr(args, "include_archived", False))
+    shown = hits + (archived if with_archive else [])
+    for line in shown[:SEARCH_HIT_CAP]:
+        print(line)
+    if len(shown) > SEARCH_HIT_CAP:
+        print(f"(命中超过 {SEARCH_HIT_CAP} 条,已截断——换更具体的关键词)")
+
+    if hits:
+        return 0
+
+    # Nothing *current* matched. Which line to print depends on whether we just
+    # listed withdrawn ones: saying 「未命中」 directly under a list of hits is a
+    # self-contradiction, and 「未命中」 is the line carrying the discipline (never
+    # pass your own knowledge off as the customer's spec), so it must land on the
+    # right case rather than being sprayed at both.
+    miss = (f"未命中:'{args.keyword}'(KB={kb})。"
+            "知识库未覆盖时必须如实说明,不得用自带知识冒充规范。")
+
+    if with_archive and archived:
+        print(f"现行条款未命中:'{args.keyword}' —— 上列 {len(archived)} 行均为"
+              "**已废止**条款,仅供追溯,不得用于判定。")
+    elif archived:
+        # The re-import trap: without this note the model concludes 「知识库没这条」
+        # while a withdrawn clause on exactly that topic sits in archive/. Say that it
+        # exists; never print its text, or it becomes usable for judging.
+        print(miss)
+        print(f"注:archive/ 中另有 {len(archived)} 行**已废止**条款命中该关键词"
+              "(不得用于判定;确需查阅历史加 --include-archived)。")
+    else:
+        print(miss)
     return 0
 
 
@@ -657,9 +809,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--kb")
     p_validate.set_defaults(func=cmd_validate)
 
-    p_search = sub.add_parser("search", help="检索知识库(errata 优先)")
+    p_search = sub.add_parser("search", help="检索知识库(errata 优先;不含已废止条款)")
     p_search.add_argument("keyword")
     p_search.add_argument("--kb")
+    p_search.add_argument("--include-archived", action="store_true",
+                          help="连 archive/ 里的已废止条款一并列出(仅供人工追溯,不得用于判定)")
     p_search.set_defaults(func=cmd_search)
 
     p_contract = sub.add_parser("contract", help="向做规范/阈值判断的 skill 注入知识库参考契约")

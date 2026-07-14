@@ -3,23 +3,58 @@
 ## 目录结构(由 `kbimport.py ingest` 自动创建)
 
 ```
-<kb>/                        # 默认 ~/.gdaa/kb(随连接配置走,重装 skill 不丢)
+<kb>/                        # 与 skills/ 同级,随 skill 一起安装,重装不丢
   VERSION                    # 如 2026.07;规范大版本更新时手工递增
   INDEX.md                   # 由 kbimport.py index 生成,勿手工编辑
   errata/                    # 修正与例外(最高优先级):实战纠错、版本差异
-  rules/                     # 机器可判定条款(yaml,稳定 GS-* ID)
+  rules/                     # 机器可判定条款(yaml,稳定 GS-* ID)—— 全部现行有效
   guides/                    # 语义指南(md + frontmatter)
+  archive/                   # 已废止条款(yaml)—— 不在检索范围内,仅供 ID 追溯
   sources/                   # 原始文档快照(只读存档,不进上下文)
   inbox/<slug>/              # ingest 产物:source.md + outline.md,条款化完删除
 ```
+
+**`rules/` 里的条款一律是现行有效的。** 各 skill 用
+`grep -rn "<关键词>" <kb>/errata <kb>/rules <kb>/guides` 检索知识库——`archive/` **有意**
+不在这个范围内。这是废止机制的全部原理,见下方「换版」。
 
 ## 规则 ID 规范(永不复用,只增不改)
 
 - 格式:`GS-<域>-NNN`,域为 2-4 位大写字母,NNN 三位数字从 001 起。
 - 建议域:`NAM` 命名 / `DDL` 建表 / `IDX` 索引 / `DML` 增删改查 / `PRC` 存储过程 /
   `GUC` 参数 / `SEC` 安全 / `MIG` 迁移兼容。新域按需自定,保持 2-4 位大写。
-- 分配新 ID 前先 `kbimport.py search GS-<域>-` 查当前最大号;**删除条款保留 ID 空洞,
-  绝不把旧 ID 分配给新条款**(报告里引用过的 ID 必须永远可追溯)。
+- 分配新 ID 前先 `kbimport.py search GS-<域>- --include-archived` 查当前最大号
+  (**必须带 `--include-archived`**,否则会漏掉 archive/ 里已废止的号段而重复分配);
+  **废止条款保留 ID 空洞,绝不把旧 ID 分配给新条款**(报告里引用过的 ID 必须永远可追溯)。
+  `validate` 会跨 `rules/` 与 `archive/` 查重,复用旧 ID 会被拦下。
+
+## 换版:客户的规范升版了怎么办
+
+**废止一条条款是「移走」,不是「打个标记」,更不是「删掉」。**
+
+为什么必须移走:各 skill 用 `grep -rn` 检索,而 grep **只输出命中行**。一条留在 `rules/` 里、
+仅仅标了 `status: deprecated` 的条款,模型搜「外键」时看到的是
+`rules/table.yaml:12: rule: 禁止使用外键约束` —— 它**看不到 status 那一行**,照样会按
+已经作废的规范判客户违规。所以物理隔离到 `archive/` 是唯一可靠的办法。
+
+为什么不能删:历史报告引用过 `GS-TBL-002`,删掉就永远查不到它当初说了什么。
+
+**换版流程(`ingest` 检测到 `rules/` 非空时会提示):**
+
+1. `ingest` 新版规范 → `inbox/<slug>/`。
+2. **先读 `INDEX.md`**,把新版原文与库里现有条款**逐条比对**,给用户看一张表:
+   `ID | 一句话 | 新增 / 沿用 / 修改 / 废止`。
+3. 用户确认后:
+   - **新增** → 分配新 ID,写进 `rules/`;
+   - **修改** → 原地改 `rules/` 里那条(ID 不变,更新 `source` 指向新版小节);
+   - **废止** → 整条**移进 `archive/<域>.yaml`**,补 `status: deprecated` 与 `superseded_by`;
+   - **沿用** → 不动(可更新 `source` 指向新版对应小节)。
+4. 递增 `VERSION`,跑 `index` + `validate`。
+
+`validate` 会**双向**校验(两个方向都是静默失效,所以都是 `[error]`):
+
+- 标了 `status: deprecated` 却还留在 `rules/` → 各 skill 的 grep 照样命中它;
+- 放进了 `archive/` 却没标 `status: deprecated` → 一条现行条款被静默地移出了检索范围。
 
 ## rules/*.yaml 条款 schema(validate 会强校验)
 
@@ -36,6 +71,21 @@
                             # 运行时 search/grep 纯字面匹配即可命中
   applies: [opengauss>=3.0, gaussdb-a]        # 建议
   source: 《XX规范》v5 §4.2.1                  # 建议(validate 会 warn)
+  status: active            # 可选,active(默认)| deprecated
+                            # 省略 = active。存量条款没这个字段,一律视为现行有效。
+```
+
+已废止的条款(**只能出现在 `archive/`**):
+
+```yaml
+- id: GS-TBL-002            # ID 保持不变,永不复用
+  severity: error
+  check: deterministic
+  rule: 禁止使用外键约束      # 原文照留,不要改写
+  source: 《XX规范》v2.1 §2.2  # 指回它当初所在的那一版原文
+  status: deprecated        # 必填(archive/ 里不标会被 validate 判 error)
+  superseded_by: 《XX规范》v2.2 已删除该条,无替代条款   # 建议:被哪条取代 / 为何废止
+                            # 也可写成另一条 ID,如 GS-TBL-007
 ```
 
 ## guides/*.md frontmatter schema
