@@ -419,7 +419,7 @@ skills/kbimport/
 │   ├── kb-contract.md    注入各 SKILL.md 的契约块模板（用户可编辑）
 │   └── kb-layout.md      条款格式与 ID 规范（模型条款化时必读）
 └── scripts/
-    └── kbimport.py  951 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
+    └── kbimport.py  966 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
 ```
 
 单文件，按职责分区：`kb layout`（路径解析/骨架）、`ingest`（格式转换 + 换版检测）、
@@ -501,13 +501,13 @@ skills/kbimport/
 
 ## 6. 测试
 
-三个 skill 共 **156 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
+三个 skill 共 **157 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
 
 | 测试文件 | 用例 | 重点覆盖 |
 |---|---|---|
 | `tests/test_sqlreview_units.py` | 41 | lexer（注释/字面量/切句/行号）、rules 加载校验、每个 checker 的命中与不命中、report |
 | `tests/test_memanalyze_units.py` | 45 | probe 视图选择与列自适应、capability 的 GUC 判定、trend 泄漏/尖峰/平稳、会话关联、采集器降级、CLI 参数解析 |
-| `tests/test_kbimport_units.py` | 70 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导、**PDF 质量闸门**(扫描件/乱码必须被拒)、**换版治理**（archive 物理隔离、双向摆放校验、ID 跨目录查重、search 与 grep 口径一致） |
+| `tests/test_kbimport_units.py` | 71 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导、**PDF 质量闸门**(扫描件/乱码必须被拒)、**换版治理**（archive 物理隔离、双向摆放校验、ID 跨目录查重、search 与 grep 口径一致） |
 | `tests/test_sqlreview_live.py` | 2 | **方言 SQL 必须能在真库上跑通**——FakeDB 单测原理上抓不到方言语法错误 |
 
 跑法：

@@ -365,6 +365,15 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     shutil.copy2(src, snapshot)
 
     inbox = kb / "inbox" / slugify(src.stem)
+    # Same filename -> same slug -> source.md is overwritten. That is the right
+    # default (same name means a new edition of the same document, and the latest
+    # is what you want), but doing it *silently* is not: whatever was still waiting
+    # to be turned into clauses just vanished, with nothing in the output to say so.
+    # The original is still snapshotted in sources/, so nothing is actually lost —
+    # only the pending work. Say that much.
+    superseded = 0
+    if (inbox / "source.md").is_file():
+        superseded = read_text_file(inbox / "source.md").count("\n")
     inbox.mkdir(parents=True, exist_ok=True)
     (inbox / "source.md").write_text(text, encoding="utf-8")
     outline_lines = [f"- L{lineno}: {title}" for lineno, title in outline]
@@ -379,6 +388,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print(f"原始快照       : {snapshot.relative_to(kb)}")
     print(f"待条款化文本   : {(inbox / 'source.md').relative_to(kb)}({total_lines} 行)")
     print(f"标题大纲       : {(inbox / 'outline.md').relative_to(kb)}({len(outline)} 个候选标题)")
+
+    if superseded:
+        print()
+        print(f"⚠ 覆盖:inbox/{inbox.name}/ 里原有上次导入、**尚未条款化**的内容"
+              f"({superseded} 行),已被本次的新版覆盖。")
+        print(f"  上一版原文快照仍在 sources/ 下(未删除),需要时可重新导入。")
 
     existing = sum(len(load_rule_file(p)[0])
                    for p in iter_files(kb, "rules", (".yaml", ".yml")))

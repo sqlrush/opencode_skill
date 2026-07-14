@@ -820,3 +820,31 @@ def test_extract_source_now_routes_pdf(tmp_path):
     with pytest.raises(kb.KbError) as exc:
         kb.extract_source(p)
     assert "不支持的格式" not in str(exc.value)
+
+
+def test_ingest_says_so_when_it_overwrites_an_unprocessed_inbox(tmp_path):
+    """同名重导会覆盖 inbox/<slug>/source.md —— 覆盖本身是对的默认(同名 = 同一份
+    文档的新版本,你要的就是最新的),但**静默**覆盖不行:上次没条款化完的待办
+    就这么没了,输出里一个字都不提。
+
+    原文快照还在 sources/,所以不是数据丢失,是「待办丢失」—— 说一句就够。"""
+    d = tmp_path / "kb"
+    src = tmp_path / "规范.txt"
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(_SCRIPT), "ingest", str(src), "--kb", str(d)],
+            capture_output=True, text=True)
+
+    src.write_text("第一章 总则\n1.1 索引名必须以 idx_ 开头。\n", encoding="utf-8")
+    first = run()
+    assert first.returncode == 0
+    assert "覆盖" not in first.stdout, "首次导入没什么可覆盖的,不该吓唬人"
+
+    src.write_text("第一章 总则\n1.1 索引名必须以 ix_ 开头。\n1.2 每张表必须有主键。\n",
+                   encoding="utf-8")
+    second = run()
+    assert second.returncode == 0
+    assert "覆盖" in second.stdout, "静默冲掉上次未处理的待办是不行的"
+    assert "2 行" in second.stdout, "要报出被覆盖的是多少内容"
+    assert "sources/" in second.stdout, "要指明原文快照还在,没真丢"
