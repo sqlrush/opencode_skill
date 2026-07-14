@@ -641,3 +641,182 @@ def test_validate_keeps_index_in_step_with_the_archive(tmp_path):
         encoding="utf-8")
     kb.validate_index(d, findings)
     assert any("gone.yaml" in m for lvl, m in findings if lvl == "error"), findings
+
+
+# --------------------------------------------------------------------------
+# PDF 导入:要么干净地读出来,要么明确拒绝 —— 绝不入库半吊子文本
+#
+# 陷阱:扫描件 PDF 里的字是图片,没有任何文本操作符。pdftotext 对它
+# **成功退出(returncode 0)、输出空字符串**。照抄 .doc 那套「退出码 0 = 成功」
+# 会写出一个空的 source.md,模型对着空文档说「这份规范没有条款」—— 而客户的
+# 规范明明白白印在那 30 页图片里。不报错、不崩溃,只是悄悄什么都没做。
+#
+# 中文规范文档里扫描件比例很高(盖了红章的基本都是扫的),所以质量闸门比
+# 提取功能本身更重要。
+# --------------------------------------------------------------------------
+def _pdf(body_objs: list, content: bytes = b"") -> bytes:
+    """手写一个最小可用 PDF(纯 stdlib,不引依赖)。"""
+    out = bytearray(b"%PDF-1.4\n")
+    offs = []
+    for i, o in enumerate(body_objs, 1):
+        offs.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(body_objs) + 1)
+    for o in offs:
+        out += b"%010d 00000 n \n" % o
+    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(body_objs) + 1, xref))
+    return bytes(out)
+
+
+_SPEC_LINES = [
+    b"Chapter 2  Index design standards for GaussDB and openGauss",
+    b"2.1 Index names must start with idx_ and unique index names with uk_",
+    b"2.2 A single index must not span more than five columns",
+    b"2.3 Do not create a standalone B-tree index on a low-cardinality column",
+    b"2.4 Redundant indexes whose columns prefix another index must be dropped",
+]
+
+
+def _text_pdf() -> bytes:
+    """一页真实体量的规范正文。夹具必须像真文档 —— 用 30 个字符的假 PDF 去测
+    「能提取」,只会证明质量闸门被绕过了。"""
+    c = b"BT /F1 12 Tf 72 720 Td 14 TL\n"
+    c += b"".join(b"(" + ln + b") Tj T*\n" for ln in _SPEC_LINES)
+    c += b"ET\n"
+    return _pdf([
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(c) + c + b"endstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ])
+
+
+def _scanned_pdf(pages: int = 12) -> bytes:
+    """只有矢量图形、没有任何文本操作符 —— 扫描件的等价物。"""
+    c = b"0.2 g 100 500 400 200 re f\n"
+    kids = b" ".join(b"%d 0 R" % (3 + i) for i in range(pages))
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [" + kids + b"] /Count %d >>" % pages,
+    ]
+    objs += [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+             b"/Contents %d 0 R >>" % (3 + pages + i) for i in range(pages)]
+    objs += [b"<< /Length %d >>\nstream\n" % len(c) + c + b"endstream"
+             for _ in range(pages)]
+    return _pdf(objs)
+
+
+# ---- 页数统计(纯函数) ----
+def test_pdf_page_count_reads_the_page_objects():
+    assert kb.pdf_page_count(_text_pdf()) == 1
+    assert kb.pdf_page_count(_scanned_pdf(12)) == 12
+
+
+def test_pdf_page_count_returns_zero_when_it_cannot_tell():
+    """PDF 1.5+ 的对象流会把 /Type /Page 压进二进制流里,数不出来。
+    数不出来就说数不出来(0),别瞎猜 —— 闸门另有绝对字符数兜底。"""
+    assert kb.pdf_page_count(b"%PDF-1.5\n(compressed object streams)\n") == 0
+
+
+# ---- 质量闸门(纯函数,这是整个功能的核心) ----
+def test_quality_gate_passes_a_normal_extraction():
+    text = "第二章 索引设计\n2.1 索引名必须以 idx_ 开头。\n2.2 索引列数不超过 5 列。\n" * 3
+    assert kb.pdf_extraction_problem(text, pages=1) is None
+
+
+def test_quality_gate_rejects_an_empty_extraction():
+    """扫描件的典型表现:退出码 0,输出空。"""
+    reason = kb.pdf_extraction_problem("", pages=12)
+    assert reason is not None
+    assert "扫描件" in reason and "OCR" in reason
+
+
+def test_quality_gate_rejects_a_suspiciously_thin_extraction():
+    """12 页只抠出几十个字 —— 页眉页脚是文本、正文是图片的混合扫描件。"""
+    reason = kb.pdf_extraction_problem("第 1 页\n" * 12, pages=12)
+    assert reason is not None
+    assert "扫描件" in reason
+
+
+def test_quality_gate_rejects_garbled_text():
+    """CID 字体缺 ToUnicode CMap 时,抠出来的是私用区/替换字符 —— 看着有内容,
+    实际全是垃圾。入库比空文档更糟:模型会把乱码当成规范条款。"""
+    reason = kb.pdf_extraction_problem("�" * 200, pages=3)
+    assert reason is not None
+    assert "乱码" in reason
+
+
+def test_quality_gate_tolerates_a_few_odd_characters():
+    """真实文档里偶有生僻字/特殊符号,不能一见到就判乱码。"""
+    text = "第二章 索引设计\n2.1 索引名必须以 idx_ 开头。\n" * 20 + "�"
+    assert kb.pdf_extraction_problem(text, pages=1) is None
+
+
+def test_quality_gate_still_guards_when_the_page_count_is_unknown():
+    """数不出页数时(pages=0),绝对字符数下限仍然要拦住空提取。"""
+    assert kb.pdf_extraction_problem("", pages=0) is not None
+    assert kb.pdf_extraction_problem("三个字", pages=0) is not None
+
+
+# ---- extract_pdf 的 I/O 行为 ----
+def test_pdf_without_a_converter_says_how_to_install_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(kb.shutil, "which", lambda _c: None)
+    p = tmp_path / "spec.pdf"
+    p.write_bytes(_text_pdf())
+    with pytest.raises(kb.KbError) as exc:
+        kb.extract_pdf(p)
+    msg = str(exc.value)
+    assert "pdftotext" in msg and ("brew" in msg or "install" in msg)
+
+
+def test_pdf_conversion_timeout_becomes_a_kberror(monkeypatch, tmp_path):
+    monkeypatch.setattr(kb.shutil, "which", lambda _c: "/usr/bin/fake")
+
+    def _hang(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="pdftotext", timeout=120)
+
+    monkeypatch.setattr(kb.subprocess, "run", _hang)
+    p = tmp_path / "spec.pdf"
+    p.write_bytes(_text_pdf())
+    with pytest.raises(kb.KbError):
+        kb.extract_pdf(p)
+
+
+def test_a_scanned_pdf_is_refused_before_anything_is_written(tmp_path):
+    """端到端红线:ingest 一份扫描件,必须**非零退出**,且 KB 里不得留下任何
+    半成品 —— 一个空的 source.md 会让模型误以为「这份规范没有条款」。"""
+    if not kb.shutil.which("pdftotext") and not kb.shutil.which("mutool"):
+        pytest.skip("本机没有 PDF 转换器")
+    d = tmp_path / "kb"
+    src = tmp_path / "扫描规范.pdf"
+    src.write_bytes(_scanned_pdf(12))
+
+    out = subprocess.run(
+        [sys.executable, str(_SCRIPT), "ingest", str(src), "--kb", str(d)],
+        capture_output=True, text=True)
+
+    assert out.returncode == 1, out.stdout
+    assert "扫描件" in out.stderr or "扫描件" in out.stdout
+    assert not (d / "inbox").exists() or not list((d / "inbox").rglob("source.md")), \
+        "拒绝导入时绝不能留下半成品 source.md"
+
+
+def test_a_text_pdf_imports(tmp_path):
+    if not kb.shutil.which("pdftotext") and not kb.shutil.which("mutool"):
+        pytest.skip("本机没有 PDF 转换器")
+    p = tmp_path / "spec.pdf"
+    p.write_bytes(_text_pdf())
+    assert "idx_" in kb.extract_pdf(p)
+
+
+def test_extract_source_now_routes_pdf(tmp_path):
+    """.pdf 不再撞「不支持的格式」。"""
+    p = tmp_path / "spec.pdf"
+    p.write_bytes(_scanned_pdf(3))
+    with pytest.raises(kb.KbError) as exc:
+        kb.extract_source(p)
+    assert "不支持的格式" not in str(exc.value)

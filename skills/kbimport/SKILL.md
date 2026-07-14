@@ -1,7 +1,7 @@
 ---
 name: kbimport
-version: 1.1.0
-description: "把客户的 GaussDB/OpenGauss 规范文档(txt/md/docx/doc)导入规范知识库:脚本负责格式转换、原文快照、INDEX 重建、规则 ID/schema 校验、全库检索、向做规范/阈值判断的 skill 注入知识库契约段(skill 自身策略仍高于知识库);你负责把条款分类成 rules(机器可判定 yaml)/ guides(语义指南 md)/ errata(修正)并起草入库。用户说「导入规范 / 建知识库 / 把 xxx.txt(doc) 加进规范 / 更新规范库 / 让 skill 按我们的规范来」即用。"
+version: 1.2.0
+description: "把客户的 GaussDB/OpenGauss 规范文档(txt/md/docx/doc/pdf)导入规范知识库:脚本负责格式转换、原文快照、INDEX 重建、规则 ID/schema 校验、全库检索、向做规范/阈值判断的 skill 注入知识库契约段(skill 自身策略仍高于知识库);你负责把条款分类成 rules(机器可判定 yaml)/ guides(语义指南 md)/ errata(修正)并起草入库。用户说「导入规范 / 建知识库 / 把 xxx.txt(doc) 加进规范 / 更新规范库 / 让 skill 按我们的规范来」即用。"
 allowed-tools: ["exec", "read", "write"]
 compatibility: opencode
 metadata:
@@ -27,8 +27,14 @@ metadata:
    ```
 
    产出:`<kb>/sources/` 原文快照、`<kb>/inbox/<slug>/source.md`(归一化文本)、
-   `outline.md`(标题大纲)。`.doc` 旧格式转换失败时,把脚本给出的原因和
-   「先另存为 .txt/.docx」的建议如实转告用户,**停下,不要自己猜内容**。
+   `outline.md`(标题大纲)。`.doc` / `.pdf` 转换失败时,把脚本给出的原因和建议
+   **如实转告用户,停下,不要自己猜内容**。
+
+   **PDF 的特殊性**:扫描件 PDF 里的字是图片,`pdftotext` 对它**成功退出却输出空文本**。
+   脚本有质量闸门,提取过少或疑似乱码时**直接报错拒绝导入**(退出码 1),不会写出
+   空的 source.md。撞上这个,如实告诉用户「这是扫描件,需要先 OCR」,**不要试图绕过**。
+   客户若同时有 `.docx` 和 `.pdf`,**永远优先要 `.docx`**——PDF 的提取质量差得多
+   (双栏排版会错乱、表格结构会丢),主动向用户要原件。
    KB 位置:`--kb <目录>` > `$GSDB_KB_DIR` > **`<安装根>/kb`**(脚本会打印实际路径)。
    `<安装根>` 从脚本自身位置推导,与 skill **装在一起**:全局安装 → `~/.config/opencode/kb/`,
    项目安装 → `<项目>/.opencode/kb/`。**知识库在 `skills/` 的同级目录,不在 skill 目录内部**
@@ -126,8 +132,11 @@ metadata:
 
 - 条款分类是**你**做的语义判断,不是脚本判定——写入前必须经用户确认,
   且每条都要能指回原文;指不回去的不入库。
-- `.doc` 旧格式依赖系统转换器(macOS textutil / antiword),都没有时只能请用户转格式。
-  PDF 不支持,请用户先转文本。
+- `.doc` 依赖系统转换器(macOS textutil / antiword),`.pdf` 依赖 poppler 的 pdftotext
+  (或 mupdf 的 mutool);都没有时如实告知安装命令,或请用户转成 .txt/.docx。
+- **PDF 只能提取「文本型」PDF**。扫描件(图片型)不做 OCR,脚本会拒绝导入并说明原因——
+  这是刻意的:入库一个空文档或一堆乱码,比明确报错危险得多。双栏排版会错乱、
+  表格结构会丢失,所以 `.docx` 原件永远优于 `.pdf`。
 - 脚本的 search 是关键词匹配,不是语义检索;没命中不代表库里没有相关内容,
   可换关键词或读 INDEX.md 后定向读文件。search **不含已废止条款**(与各 skill 的
   grep 范围一致);命中了已废止条款时它会提示条数,但不显示内容——废止条款**不得用于判定**。

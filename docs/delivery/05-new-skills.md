@@ -331,7 +331,7 @@ python3 {baseDir}/scripts/kbimport.py contract --apply    # 确认后执行
 | `.txt` / `.md` / `.sql` | 直接读，**UTF-8 与 GB18030 都支持** |
 | `.docx` | 解 zip 抠 `word/document.xml`，纯 stdlib |
 | `.doc` | 调系统转换器：macOS `textutil` → `antiword`；都没有时请用户另存格式 |
-| `.pdf` | **不支持**，请先转成文本 |
+| `.pdf` | 调 `pdftotext`(poppler)→ `mutool`(mupdf)。**带质量闸门**,见下 |
 
 ### 4.4 知识库目录结构
 
@@ -363,6 +363,23 @@ python3 {baseDir}/scripts/kbimport.py contract --apply    # 确认后执行
 `validate` 会校验：ID 格式与唯一性（**跨 `rules/` 与 `archive/`**）、必填字段、
 `severity`/`check`/`status` 枚举、废止条款的摆放位置、guides 的 frontmatter、
 INDEX 与实际文件的一致性、文件编码、inbox 是否还有未处理项。
+
+**PDF 的质量闸门(比提取功能本身更重要)**：扫描件 PDF 里的字是图片，没有任何文本操作符，
+`pdftotext` 对它**成功退出（exit 0）却输出空字符串**。照抄 `.doc` 那套「退出码 0 = 成功」
+会写出一个空的 `source.md`，模型于是对着空文档说「这份规范没有条款」——而客户的规范
+明明白白印在那 30 页图片里。中文规范文档扫描件比例很高（盖了红章的基本都是扫的）。
+
+所以提取之后必须验产出，三条任一不过就**报错拒绝导入**（退出码 1，不留半成品）：
+
+| 闸门 | 阈值 | 拦的是什么 |
+|---|---|---|
+| 绝对字符数 | `< 100` | 空提取 |
+| 每页字符数 | `< 50` | 混合扫描件（页眉是文本、正文是图） |
+| 乱码占比 | `> 10%` | CID 字体缺 ToUnicode，抠出私用区码位——**乱码入库比空文档更糟** |
+
+页数由 `pdf_page_count()` 数 `/Type /Page` 得出（纯 stdlib）；PDF 1.5+ 的对象流数不出来时
+返回 0，闸门退回到绝对字符数兜底。`pdftotext` 是**系统工具**，不是 Python 依赖——
+三个运行时依赖的红线没破。
 
 ### 4.5 换版：废止一条条款是「移走」，不是「打标记」
 
@@ -402,7 +419,7 @@ skills/kbimport/
 │   ├── kb-contract.md    注入各 SKILL.md 的契约块模板（用户可编辑）
 │   └── kb-layout.md      条款格式与 ID 规范（模型条款化时必读）
 └── scripts/
-    └── kbimport.py  836 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
+    └── kbimport.py  951 行   五个子命令，纯 stdlib + PyYAML，**不连数据库**
 ```
 
 单文件，按职责分区：`kb layout`（路径解析/骨架）、`ingest`（格式转换 + 换版检测）、
@@ -484,13 +501,13 @@ skills/kbimport/
 
 ## 6. 测试
 
-三个 skill 共 **143 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
+三个 skill 共 **156 个 DB-free 单测**（另有 2 个 sqlreview live 测试，无库时自动 skip）：
 
 | 测试文件 | 用例 | 重点覆盖 |
 |---|---|---|
 | `tests/test_sqlreview_units.py` | 41 | lexer（注释/字面量/切句/行号）、rules 加载校验、每个 checker 的命中与不命中、report |
 | `tests/test_memanalyze_units.py` | 45 | probe 视图选择与列自适应、capability 的 GUC 判定、trend 泄漏/尖峰/平稳、会话关联、采集器降级、CLI 参数解析 |
-| `tests/test_kbimport_units.py` | 57 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导、**换版治理**（archive 物理隔离、双向摆放校验、ID 跨目录查重、search 与 grep 口径一致） |
+| `tests/test_kbimport_units.py` | 70 | 契约注入的幂等与**标记损坏时拒写**、模板反斜杠、GBK 编码、`.doc` 超时、rule schema 校验、KB 路径推导、**PDF 质量闸门**(扫描件/乱码必须被拒)、**换版治理**（archive 物理隔离、双向摆放校验、ID 跨目录查重、search 与 grep 口径一致） |
 | `tests/test_sqlreview_live.py` | 2 | **方言 SQL 必须能在真库上跑通**——FakeDB 单测原理上抓不到方言语法错误 |
 
 跑法：
@@ -506,4 +523,4 @@ python3 -m pytest -q -m live          # 实机测试（无连接时自动 skip�
 
 ---
 
-*文档更新于 2026-07-14，对应 sqlreview 1.0.0 / memanalyze 1.0.0 / kbimport 1.1.0（新增换版治理）。*
+*文档更新于 2026-07-14，对应 sqlreview 1.0.0 / memanalyze 1.0.0 / kbimport 1.2.0（换版治理 + PDF 导入）。*
