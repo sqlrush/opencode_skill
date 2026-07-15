@@ -497,6 +497,67 @@ def describe_rule_file(path: pathlib.Path) -> str:
     return f"{len(ids)} 条({span}){comment}"
 
 
+# RULES.md is the rule-level L1 index: one line per *active* clause, always loaded
+# by the consuming skills so the model picks by reading the full set instead of
+# guessing what keyword to grep. INDEX.md stops at the file — the semantic-drift
+# gap lives in the file→clause jump, and this is what closes it.
+_LISTED_ID_RE = re.compile(r"`(GS-[A-Z]{2,4}-\d{3})`")
+
+
+def iter_active_rules(kb: pathlib.Path):
+    """Yield (path, err, active_entries) for each rules/*.yaml, in file order.
+
+    Deprecated clauses are dropped here — RULES.md is the judge-against list, and a
+    withdrawn clause must never enter it (that is the whole point of archive/).
+    """
+    for path in iter_files(kb, "rules", (".yaml", ".yml")):
+        entries, err = load_rule_file(path)
+        if err:
+            yield path, err, []
+            continue
+        active = [e for e in entries
+                  if isinstance(e, dict) and rule_status(e) == STATUS_ACTIVE]
+        yield path, None, active
+
+
+def _rule_file_comment(path: pathlib.Path) -> str:
+    try:
+        head = read_text_file(path).splitlines()[0]
+    except (OSError, IndexError):
+        return ""
+    return head.lstrip("#").strip() if head.startswith("#") else ""
+
+
+def render_rules_listing(kb: pathlib.Path) -> str:
+    total = 0
+    body: list[str] = []
+    for path, err, active in iter_active_rules(kb):
+        rel = path.relative_to(kb / "rules")
+        comment = _rule_file_comment(path)
+        body += ["", f"## rules/{rel}" + (f" — {comment}" if comment else ""), ""]
+        if err:
+            body.append(f"- ⚠ {err}(修好后重跑 index)")
+            continue
+        for entry in active:
+            rid = entry.get("id", "?")
+            sev = entry.get("severity", "?")
+            rule = str(entry.get("rule", "")).strip() or "(空条款)"
+            body.append(f"- `{rid}` · {sev} · {rule}")
+            total += 1
+
+    header = [
+        "# 现行条款速查(RULES)",
+        "",
+        f"> 由 `kbimport.py index` 自动生成,勿手工编辑。版本 {read_version(kb)} · "
+        f"现行条款 {total} 条。",
+        "> **这是全部现行条款的逐条清单。** 判定前先在此逐条判断相关性,"
+        "再去 `rules/` 读选中条款全文(rationale/criteria/keywords)。",
+        "> 不必猜关键词 —— 条款都在这里。已废止条款不在此列"
+        "(见 `INDEX.md` 的 archive 段,仅供 ID 追溯,**不得据此判定**)。",
+    ]
+    return "\n".join(header + (body or ["", "(暂无现行条款)"])) + "\n"
+
+
 def cmd_index(args: argparse.Namespace) -> int:
     kb = resolve_kb_dir(args.kb)
     if not kb.is_dir():
@@ -517,6 +578,7 @@ def cmd_index(args: argparse.Namespace) -> int:
         f"勘误 {len(errata)} 篇 · 条款 {rule_total} 条 · 指南 {len(guides)} 篇 · "
         f"已废止 {archive_total} 条。",
         "> 查询优先级:errata/ > rules/ > guides/ > 模型自带知识。",
+        "> **现行条款的逐条清单见 `RULES.md`**(判定前先读它);本索引到文件级为止。",
         "",
         "## errata/(修正与例外 —— 最高优先级)",
         "",
@@ -539,7 +601,10 @@ def cmd_index(args: argparse.Namespace) -> int:
               "(archive/ 不在其中,是有意为之)。", ""]
 
     (kb / "INDEX.md").write_text("\n".join(lines), encoding="utf-8")
-    print(f"INDEX.md 已重建:{kb / 'INDEX.md'}({len(lines)} 行)")
+    listing = render_rules_listing(kb)
+    (kb / "RULES.md").write_text(listing, encoding="utf-8")
+    print(f"INDEX.md 已重建:{kb / 'INDEX.md'}({len(lines)} 行);"
+          f"RULES.md 已重建:{kb / 'RULES.md'}({rule_total} 条现行条款)")
     return 0
 
 
@@ -719,6 +784,44 @@ def validate_index(kb: pathlib.Path, findings: list) -> None:
         findings.append(("warn", "INDEX.md 比库内容旧(重新运行 index)"))
 
 
+def validate_rules_listing(kb: pathlib.Path, findings: list) -> None:
+    """RULES.md 必须与 rules/ 的现行条款**逐一对齐**,两个方向都当 error。
+
+    这一层引入了一个新的静默失效点:RULES.md 是模型判定时逐条筛选的候选清单,
+    清单漏掉一条,那条条款对模型就等同于不存在 —— 跟 grep 没命中一样,不报错、查不出。
+    所以校验双向卡死:
+      - 现行条款缺席清单 → 模型永远看不见它;
+      - 清单里的 ID 在 rules/ 已无对应现行条款 → 幽灵条款(多半是废止/删除后忘了重跑 index),
+        会让模型据一条并不存在的规范去判客户违规。
+    """
+    listing = kb / "RULES.md"
+    if not listing.is_file():
+        findings.append(("error", "RULES.md 不存在(运行 kbimport.py index 生成现行条款清单)"))
+        return
+    listed = set(_LISTED_ID_RE.findall(read_text_file(listing)))
+
+    active: set[str] = set()
+    newest = 0.0
+    for path, err, entries in iter_active_rules(kb):
+        newest = max(newest, path.stat().st_mtime)
+        if err:
+            continue                      # 坏文件由 validate_rules 另行报错,这里不重复
+        active.update(str(e["id"]) for e in entries if e.get("id"))
+
+    for rid in sorted(active - listed):
+        findings.append((
+            "error",
+            f"RULES.md 缺少现行条款 `{rid}` —— 模型逐条筛选时看不到它,"
+            f"等同于这条规范不存在(重新运行 index)"))
+    for rid in sorted(listed - active):
+        findings.append((
+            "error",
+            f"RULES.md 列出了 `{rid}`,但 rules/ 里已无此现行条款 —— 幽灵条款会让模型"
+            f"据一条不存在的规范判违规(废止/删除后重新运行 index)"))
+    if active and listing.stat().st_mtime < newest:
+        findings.append(("warn", "RULES.md 比 rules/ 旧(重新运行 index)"))
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     kb = resolve_kb_dir(args.kb)
     if not kb.is_dir():
@@ -728,6 +831,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     validate_rules(kb, findings)
     validate_guides(kb, findings)
     validate_index(kb, findings)
+    validate_rules_listing(kb, findings)
     for sub in sorted((kb / "inbox").glob("*")) if (kb / "inbox").is_dir() else []:
         if sub.is_dir():
             findings.append(("warn", f"inbox/{sub.name} 尚未条款化(处理完后删除该目录)"))

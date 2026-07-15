@@ -5,7 +5,8 @@
 ```
 <kb>/                        # 与 skills/ 同级,随 skill 一起安装,重装不丢
   VERSION                    # 如 2026.07;规范大版本更新时手工递增
-  INDEX.md                   # 由 kbimport.py index 生成,勿手工编辑
+  INDEX.md                   # 文件级地图(errata/guides/archive 一览),index 生成,勿手工编辑
+  RULES.md                   # 现行条款逐条清单(L1,判定前全量读),index 生成,勿手工编辑
   errata/                    # 修正与例外(最高优先级):实战纠错、版本差异
   rules/                     # 机器可判定条款(yaml,稳定 GS-* ID)—— 全部现行有效
   guides/                    # 语义指南(md + frontmatter)

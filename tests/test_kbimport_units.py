@@ -644,6 +644,114 @@ def test_validate_keeps_index_in_step_with_the_archive(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# RULES.md:现行条款的逐条全量清单(L1)
+#
+# INDEX.md 是**文件级**地图(一行代表一个 yaml 文件,只到「索引规范在 index.yaml」
+# 这一层);而语义转化的坎藏在「文件 → 条款」这最后一跳里——模型要在文件内定位到
+# 具体某条,还是得猜关键词去 grep。RULES.md 把索引颗粒度推进到**条款级**:每条
+# 现行条款一行,全量摊开,模型逐条判相关性,不必猜该搜什么。
+#
+# 代价是引入了一个**新的**静默失效点:清单一旦与 rules/ 脱节(漏一条 / 多一条),
+# 模型看到的候选集就不再完整。所以 validate 必须守住「RULES.md 的 ID 集合 == rules/
+# 现行条款 ID 集合」这个双向不变式——这几个测试就是钉死这条不变式的。
+# --------------------------------------------------------------------------
+def _index(d: pathlib.Path) -> None:
+    kb.cmd_index(type("A", (), {"kb": str(d)})())
+
+
+def test_index_writes_a_rule_level_listing(tmp_path):
+    """逐条,不是逐文件:两条 ID 连同条款全文都要在 RULES.md 里。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [
+        dict(_GOOD, id="GS-IDX-001", rule="索引名必须以 idx_ 开头"),
+        dict(_GOOD, id="GS-IDX-003", rule="单个索引列数不超过 4 列"),
+    ])
+    _index(d)
+    listing = (d / "RULES.md").read_text(encoding="utf-8")
+    assert "GS-IDX-001" in listing and "索引名必须以 idx_ 开头" in listing
+    assert "GS-IDX-003" in listing and "单个索引列数不超过 4 列" in listing
+
+
+def test_rule_listing_excludes_archived_clauses(tmp_path):
+    """RULES.md 是「据此判定」的清单,废止条款绝不能进——否则重演静默失效。
+
+    追溯性由 INDEX.md 的 archive 段负责,与判定清单是两回事,不能混。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _write_archive(d, [_DEPRECATED])
+    _index(d)
+    listing = (d / "RULES.md").read_text(encoding="utf-8")
+    assert "GS-TBL-002" not in listing
+    assert "禁止使用外键约束" not in listing
+
+
+def test_index_points_at_the_rule_listing(tmp_path):
+    """INDEX.md 要把模型引到 RULES.md,否则新加的这层没人读。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _index(d)
+    assert "RULES.md" in (d / "INDEX.md").read_text(encoding="utf-8")
+
+
+def test_validate_errors_when_the_rule_listing_is_missing(tmp_path):
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _index(d)
+    (d / "RULES.md").unlink()
+    findings = []
+    kb.validate_rules_listing(d, findings)
+    assert any("RULES.md" in m for lvl, m in findings if lvl == "error")
+
+
+def test_validate_errors_when_a_rule_is_absent_from_the_listing(tmp_path):
+    """核心不变式(正向):漏掉一条 = 模型永远看不见它 = 新的静默失效点。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [
+        dict(_GOOD, id="GS-IDX-001", rule="第一条"),
+        dict(_GOOD, id="GS-IDX-003", rule="第二条"),
+    ])
+    _index(d)
+    p = d / "RULES.md"                              # 手工抹掉一条,模拟清单与 rules/ 脱节
+    kept = [l for l in p.read_text(encoding="utf-8").splitlines() if "GS-IDX-003" not in l]
+    p.write_text("\n".join(kept), encoding="utf-8")
+    findings = []
+    kb.validate_rules_listing(d, findings)
+    assert any("GS-IDX-003" in m for lvl, m in findings if lvl == "error")
+
+
+def test_validate_errors_when_the_listing_has_a_dangling_id(tmp_path):
+    """核心不变式(反向):清单里多出一条 rules/ 里已不存在的 ID —— 幽灵条款。"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _index(d)
+    p = d / "RULES.md"
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\n- `GS-IDX-999` · error · 一条 rules/ 里并不存在的幽灵条款\n",
+                 encoding="utf-8")
+    findings = []
+    kb.validate_rules_listing(d, findings)
+    assert any("GS-IDX-999" in m for lvl, m in findings if lvl == "error")
+
+
+def test_cmd_validate_wires_in_the_rule_listing_check(tmp_path):
+    """回归护栏:validate_rules_listing 必须真的被 cmd_validate 调到,不能只是定义了。
+
+    (参照 test_cmd_validate_wires_in_the_encoding_check 的同款教训。)"""
+    d = _kb_dir(tmp_path)
+    _write_rules(d, [_GOOD])
+    _index(d)
+    (d / "RULES.md").unlink()
+    rc = kb.cmd_validate(type("A", (), {"kb": str(d)})())
+    assert rc == 2, "缺 RULES.md 是静默失效隐患,cmd_validate 必须判 error"
+
+
+def test_contract_leads_with_the_listing_not_keyword_grep(tmp_path):
+    """契约模板必须把模型引向「读 RULES.md 逐条判」,而不再把「猜关键词 grep」当主路径。"""
+    tpl = kb.load_contract_template()
+    assert "RULES.md" in tpl, "契约没提 RULES.md,新加的 L1 层不会被任何 skill 读到"
+
+
+# --------------------------------------------------------------------------
 # PDF 导入:要么干净地读出来,要么明确拒绝 —— 绝不入库半吊子文本
 #
 # 陷阱:扫描件 PDF 里的字是图片,没有任何文本操作符。pdftotext 对它
