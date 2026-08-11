@@ -29,6 +29,7 @@ for _anc in _HERE.parents:                      # locate common/ (repo root or i
         sys.path.insert(0, str(_anc))
         break
 
+import coltypes  # noqa: E402
 import common  # noqa: E402
 import render  # noqa: E402
 from evidence import Evidence, collect, evidence_report  # noqa: E402
@@ -51,8 +52,16 @@ class TuneResult:
 
 def _tune(db, *, original_sql: str, binds: list[str], do_analyze: bool,
           sql_id: str = "", source: str = "", schema: str = "") -> TuneResult:
-    sub = substitute(original_sql, binds)
-    ev = collect(db, sub.sql, do_analyze)
+    types = coltypes.infer_types(db, original_sql)
+    sub = substitute(original_sql, binds, types=types)
+    coltypes.validate_binds(sub.substitutions, types)
+    try:
+        ev = collect(db, sub.sql, do_analyze)
+    except common.DBError as exc:
+        enriched = coltypes.enrich_type_error(str(exc), sub.substitutions)
+        if enriched:
+            raise common.DBError(enriched) from exc
+        raise
 
     verified: list[IndexCandidate] = []
     note = ""
