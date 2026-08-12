@@ -32,6 +32,7 @@ for _anc in _HERE.parents:                      # locate common/ (repo root or i
 import coltypes  # noqa: E402
 import common  # noqa: E402
 import render  # noqa: E402
+import systables  # noqa: E402
 from evidence import Evidence, collect, evidence_report  # noqa: E402
 from hypoindex import MIN_SPEEDUP, IndexCandidate, verify_indexes  # noqa: E402
 from placeholder import SubstituteResult, substitute  # noqa: E402
@@ -52,6 +53,9 @@ class TuneResult:
 
 def _tune(db, *, original_sql: str, binds: list[str], do_analyze: bool,
           sql_id: str = "", source: str = "", schema: str = "") -> TuneResult:
+    verdict = systables.system_verdict(original_sql)
+    if verdict.is_system:
+        raise systables.SystemSQLSkipped(verdict.system_objects)
     types = coltypes.infer_types(db, original_sql)
     sub = substitute(original_sql, binds, types=types)
     coltypes.validate_binds(sub.substitutions, types)
@@ -206,6 +210,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps(_to_jsonable(tr), ensure_ascii=False, indent=2))
         else:
             print(sqltune_report(tr), end="")
+        return 0
+    except systables.SystemSQLSkipped as exc:
+        # 策略性跳过是确定性结论,不是失败——exit 0,免得上层 agent 当错误重试。
+        if args.format == "json":
+            print(json.dumps(systables.skip_json(exc.objects), ensure_ascii=False, indent=2))
+        else:
+            print(systables.skip_report(exc.objects), end="")
         return 0
     except (ValueError, common.DBError) as exc:
         print(f"error: {exc}", file=sys.stderr)
