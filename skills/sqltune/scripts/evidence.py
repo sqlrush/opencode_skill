@@ -209,9 +209,12 @@ WHERE c.relname IN {_quote_literals(names)} AND c.relkind IN ('r','v','p','m')""
 def collect_indexes(db, names: list[str]) -> list[IndexInfo]:
     if not names:
         return []
+    # 输出列必须唯一命名:gsql 后端用 json_agg(row_to_json(...)) 回传,JSON 对象
+    # 不允许重复键——两个 relname 会塌成一列,行变短后按下标取值直接越界。
     q = f"""
-SELECT t.relname, i.relname, ix.indisunique, ix.indisprimary,
-       pg_get_indexdef(ix.indexrelid)
+SELECT t.relname AS table_name, i.relname AS index_name,
+       ix.indisunique, ix.indisprimary,
+       pg_get_indexdef(ix.indexrelid) AS index_def
 FROM pg_class t
 JOIN pg_index ix ON t.oid = ix.indrelid
 JOIN pg_class i ON i.oid = ix.indexrelid
