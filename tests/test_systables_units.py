@@ -1,12 +1,16 @@
 """DB-free unit tests for the system-SQL policy gate (systables)."""
+import io
+import json
 import pathlib
 import sys
 
 import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "skills" / "sqltune" / "scripts"))
 
+import common  # noqa: E402
 import evidence  # noqa: E402
 import systables  # noqa: E402
 import sqltune  # noqa: E402
@@ -115,6 +119,48 @@ def test_tune_gate_rejects_system_sql_before_db():
         sqltune._tune(_BoomDB(), original_sql="SELECT * FROM dbe_perf.statement",
                       binds=[], do_analyze=False)
     assert ei.value.objects == ["dbe_perf.statement"]
+
+
+# --- CLI exit-code contract --------------------------------------------------
+#
+# 跳过必须 exit 0：现场 agent 把非零退出当可重试故障，工商银行那次就是同一条
+# SQL 失败重试一小时。这条契约比报告文案更要紧，单测钉死它。
+
+class _FakeConn:
+    def __init__(self, *a, **k):
+        pass
+
+    def set_statement_timeout(self, *a, **k):
+        pass
+
+    def query(self, *a, **k):
+        raise AssertionError("system SQL must be rejected before touching the DB")
+
+    def close(self):
+        pass
+
+
+def _run_cli(monkeypatch, capsys, sql: str, argv: list[str]) -> tuple[int, str]:
+    monkeypatch.setattr(common.Database, "connect",
+                        staticmethod(lambda *a, **k: _FakeConn()))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(sql))
+    rc = sqltune.main(argv)
+    return rc, capsys.readouterr().out
+
+
+def test_cli_skip_exits_zero_markdown(monkeypatch, capsys):
+    rc, out = _run_cli(monkeypatch, capsys, "SELECT * FROM dbe_perf.statement",
+                       ["-c", "og", "--sql-stdin"])
+    assert rc == 0
+    assert "按策略跳过" in out and "dbe_perf.statement" in out
+
+
+def test_cli_skip_exits_zero_json(monkeypatch, capsys):
+    rc, out = _run_cli(monkeypatch, capsys, "SELECT * FROM pg_settings",
+                       ["-c", "og", "--sql-stdin", "--format", "json"])
+    assert rc == 0
+    assert json.loads(out) == {"skipped": True, "reason": "system-sql",
+                               "system_objects": ["pg_settings"]}
 
 
 # --- verify.py guards --------------------------------------------------------
