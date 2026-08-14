@@ -57,6 +57,104 @@ def test_substitute_bind_override():
     assert r.substitutions[0].source == "bind"
 
 
+# --- bind 值的字面量化 ---------------------------------------------------------
+# 2026-08-14 现场（192.168.1.15）一条 SQL 连挂三轮挖出来的一组。--bind 收到的是
+# **数据值**,不是 SQL 片段：shell 的引号在 argv 之前就被吃掉了,脚本必须自己按
+# 列类型决定要不要引。
+
+def test_comparison_column_handles_repeated_in_placeholders():
+    """IN 列表里第 2 个起的占位符也要归属到同一列。
+
+    否则 catalog 类型探测只覆盖第一个,其余退回文本启发式填 'test',
+    撞上 smallint 列就是现场那条 invalid input syntax for integer: "test"。
+    """
+    sql = "SELECT * FROM customer c WHERE c.customer_level IN (?, ?, ?, ?)"
+    columns = [placeholder.comparison_column(ctx)
+               for ctx in placeholder.placeholder_contexts(sql)]
+    assert columns == ["customer_level"] * 4
+
+
+def test_substitute_bind_serializes_timestamp_and_text_values():
+    r = placeholder.substitute(
+        "SELECT * FROM t WHERE created_at >= TIMESTAMP ? AND name = ?",
+        ["2024-01-01 00:00:00", "O'Reilly"],
+        [None, "varchar"],
+    )
+    assert [s.value for s in r.substitutions] == [
+        "'2024-01-01 00:00:00'", "'O''Reilly'",
+    ]
+    assert "TIMESTAMP '2024-01-01 00:00:00'" in r.sql
+
+
+def test_substitute_bind_preserves_explicit_literals_and_numbers():
+    r = placeholder.substitute(
+        "SELECT * FROM t WHERE created_at >= TIMESTAMP ? AND level = ?",
+        ["'2024-01-01 00:00:00'", "2"],
+        ["timestamp without time zone", "smallint"],
+    )
+    assert [s.value for s in r.substitutions] == ["'2024-01-01 00:00:00'", "2"]
+
+
+def test_bind_into_a_text_column_is_quoted_even_when_it_looks_numeric():
+    """列类型说了算,不能因为值长得像数字就放弃加引号。
+
+    账号/机构号/客户号这类"存在 varchar 列里的纯数字"是银行现场的主流形态;
+    原样拼进去 openGauss 报 operator does not exist: character varying = bigint。
+    """
+    r = placeholder.substitute("SELECT 1 FROM t WHERE acct_no = ?",
+                               ["6222021234567"], ["varchar"])
+    assert r.substitutions[0].value == "'6222021234567'"
+    r2 = placeholder.substitute("SELECT 1 FROM t WHERE org_no = ?",
+                                ["001"], ["character"])
+    assert r2.substitutions[0].value == "'001'"
+
+
+def test_bind_of_bare_text_is_quoted_when_the_column_type_is_unknown():
+    """类型探测失败时也不能把文本裸拼——那会变成标识符。
+
+    `x = ABC` 报的是 column "abc" does not exist,这个报错完全指不到 bind 上,
+    比不加引号本身更难排查。
+    """
+    r = placeholder.substitute("SELECT 1 FROM t WHERE x = ?", ["ABC"], [None])
+    assert r.substitutions[0].value == "'ABC'"
+
+
+def test_numeric_bind_stays_bare_so_limit_offset_keep_working():
+    """LIMIT/OFFSET 的参数必须是裸数字,不能被顺手引起来。"""
+    r = placeholder.substitute("SELECT 1 FROM t LIMIT ? OFFSET ?",
+                               ["1000", "10"], [None, None])
+    assert [s.value for s in r.substitutions] == ["1000", "10"]
+
+
+# --- 报告里的合成值声明 --------------------------------------------------------
+
+def _report_with(binds, types, sql="SELECT 1 FROM t WHERE a = ? AND b = ?"):
+    import sqltune
+    sub = placeholder.substitute(sql, binds, types)
+    ev = evidence.Evidence(sql=sub.sql, version="og", plan="Seq Scan", analyzed=False)
+    return sqltune.sqltune_report(sqltune.TuneResult(
+        original_sql=sql, substitution=sub, evidence=ev))
+
+
+def test_report_does_not_call_real_bind_values_synthetic():
+    """全部值都来自 --bind 时,报告不能再自称合成值。
+
+    SKILL.md 要求「基于合成值的倍数」必须附 caveat,报告若无条件声明合成,
+    模型就会给一份真实值跑出来的结论硬加免责,把结论说弱。
+    """
+    out = _report_with(["42", "7"], ["integer", "integer"])
+    assert "## Placeholder Substitution" in out          # 小节仍可被 SKILL.md 认出
+    assert "synthetic" not in out.lower()
+    assert "re-run with `--bind`" not in out
+
+
+def test_report_still_warns_when_any_value_is_synthetic():
+    """只要有一个值是猜的,合成值提醒必须还在——降级要说出口。"""
+    out = _report_with(["42"], ["integer", "integer"])
+    assert "synthetic" in out.lower()
+    assert "--bind" in out
+
+
 def test_substitute_skips_string_literals():
     # The ? inside the literal must NOT be treated as a placeholder.
     r = placeholder.substitute("SELECT '?' , id FROM t WHERE id = ?", [])
